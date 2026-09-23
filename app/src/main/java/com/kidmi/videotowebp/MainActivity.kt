@@ -372,6 +372,9 @@ private fun VideoToWebPApp(
     var batchUris by remember {
         mutableStateOf<List<Uri>>(emptyList())
     }
+    var batchRunToken by remember {
+        mutableIntStateOf(0)
+    }
     var selectedTab by rememberSaveable {
         mutableIntStateOf(0)
     }
@@ -790,6 +793,9 @@ private fun VideoToWebPApp(
         engine.cancel()
         exoPlayer.pause()
 
+        batchRunToken += 1
+        val runToken = batchRunToken
+
         converting = true
         progress = 0f
         result = null
@@ -830,7 +836,14 @@ private fun VideoToWebPApp(
 
         lateinit var convertNext: () -> Unit
 
-        convertNext = {
+        convertNext = next@{
+            if (
+                batchRunToken != runToken ||
+                !converting
+            ) {
+                return@next
+            }
+
             if (queueIndex >= queue.size) {
                 finishBatch()
             } else {
@@ -869,6 +882,13 @@ private fun VideoToWebPApp(
                             status = "배치 변환 실패"
                             return@launch
                         }
+
+                    if (
+                        batchRunToken != runToken ||
+                        !converting
+                    ) {
+                        return@launch
+                    }
 
                     val itemStartMs = 0L
                     val itemEndMs =
@@ -961,10 +981,16 @@ private fun VideoToWebPApp(
                                         )
                             },
                             onComplete = {
-                                allParts +=
-                                    it.parts
-                                queueIndex += 1
-                                convertNext()
+                                if (
+                                    batchRunToken ==
+                                        runToken &&
+                                    converting
+                                ) {
+                                    allParts +=
+                                        it.parts
+                                    queueIndex += 1
+                                    convertNext()
+                                }
                             },
                             onError = {
                                 converting = false
@@ -1047,12 +1073,24 @@ private fun VideoToWebPApp(
                                         )
                             },
                             onComplete = {
-                                runBatchEngine(it)
+                                if (
+                                    batchRunToken ==
+                                        runToken &&
+                                    converting
+                                ) {
+                                    runBatchEngine(it)
+                                }
                             },
                             onError = {
-                                runBatchEngine(
-                                    emptyList()
-                                )
+                                if (
+                                    batchRunToken ==
+                                        runToken &&
+                                    converting
+                                ) {
+                                    runBatchEngine(
+                                        emptyList()
+                                    )
+                                }
                             },
                             onCancelled = {
                                 converting = false
@@ -1173,9 +1211,12 @@ private fun VideoToWebPApp(
                             }
                         },
                         onCancel = {
+                            batchRunToken += 1
+                            converting = false
                             subjectTracker.cancel()
                             engine.cancel()
-                            status = "취소 요청 중…"
+                            progress = 0f
+                            status = "변환이 취소되었습니다."
                         }
                     )
                 }
@@ -1319,12 +1360,14 @@ private fun VideoToWebPApp(
                                 TimelineThumbnailStrip(
                                     context = context,
                                     uri = currentUri,
-                                    startMs =
-                                        (startSec * 1000f)
-                                            .toLong(),
+                                    startMs = 0L,
                                     endMs =
-                                        (endSec * 1000f)
-                                            .toLong(),
+                                        videoInfo?.durationMs
+                                            ?: (
+                                                endSec *
+                                                    1000f
+                                                )
+                                                .toLong(),
                                     currentMs =
                                         currentPositionMs,
                                     onSeek = { target ->
