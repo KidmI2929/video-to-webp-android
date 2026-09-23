@@ -933,22 +933,19 @@ private fun PlayerSection(
                         }
                 ) {
                     cropAspect.ratio?.let { targetRatio ->
+                        val ratio = targetRatio.toFloat()
                         val canvasRatio =
                             size.width / size.height
 
                         val cropWidth: Float
                         val cropHeight: Float
 
-                        if (canvasRatio > targetRatio) {
+                        if (canvasRatio > ratio) {
                             cropHeight = size.height
-                            cropWidth =
-                                (cropHeight * targetRatio)
-                                    .toFloat()
+                            cropWidth = cropHeight * ratio
                         } else {
                             cropWidth = size.width
-                            cropHeight =
-                                (cropWidth / targetRatio)
-                                    .toFloat()
+                            cropHeight = cropWidth / ratio
                         }
 
                         val centerX =
