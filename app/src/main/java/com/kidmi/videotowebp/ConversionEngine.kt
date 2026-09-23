@@ -153,7 +153,7 @@ class ConversionEngine(private val context: Context) {
         val endMs = settings.endMs.coerceAtLeast(startMs + 100L)
         val startedAt = SystemClock.elapsedRealtime()
         val stamp = SimpleDateFormat(
-            "yyyyMMdd_HHmmss",
+            "yyyyMMdd_HHmmss_SSS",
             Locale.US
         ).format(Date())
 
