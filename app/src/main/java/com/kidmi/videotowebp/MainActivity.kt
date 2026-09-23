@@ -813,7 +813,8 @@ private fun VideoToWebPApp(
                             .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        if (videoInfo == null) {
+                        val currentInfo = videoInfo
+                        if (currentInfo == null) {
                             EmptyTabHint(
                                 title = "추적할 영상이 없습니다",
                                 message = "편집 탭에서 먼저 영상을 선택하세요.",
@@ -823,7 +824,7 @@ private fun VideoToWebPApp(
                         } else {
                             CompactFocusPreview(
                                 exoPlayer = exoPlayer,
-                                info = videoInfo,
+                                info = currentInfo,
                                 cropAspect = cropAspect,
                                 focusX = focusX,
                                 focusY = focusY,
