@@ -34,6 +34,15 @@ enum class SplitMode {
     SIZE
 }
 
+enum class CropAspect(val ratio: Double?) {
+    ORIGINAL(null),
+    SQUARE(1.0),
+    PORTRAIT_4_5(4.0 / 5.0),
+    PORTRAIT_9_16(9.0 / 16.0),
+    PORTRAIT_3_4(3.0 / 4.0),
+    LANDSCAPE_16_9(16.0 / 9.0)
+}
+
 data class ConversionSettings(
     val startMs: Long,
     val endMs: Long,
@@ -46,7 +55,10 @@ data class ConversionSettings(
     val outputTreeUri: Uri? = null,
     val splitMode: SplitMode = SplitMode.NONE,
     val splitCount: Int = 2,
-    val targetPartSizeMb: Int = 8
+    val targetPartSizeMb: Int = 8,
+    val cropAspect: CropAspect = CropAspect.ORIGINAL,
+    val focusX: Float = 0.5f,
+    val focusY: Float = 0.5f
 )
 
 data class ConversionPartResult(
@@ -736,7 +748,35 @@ class ConversionEngine(private val context: Context) {
         }
 
         val filters = buildList {
+            settings.cropAspect.ratio?.let { targetRatio ->
+                val ratioText = String.format(Locale.US, "%.8f", targetRatio)
+                val focusX = String.format(
+                    Locale.US,
+                    "%.6f",
+                    settings.focusX.coerceIn(0f, 1f)
+                )
+                val focusY = String.format(
+                    Locale.US,
+                    "%.6f",
+                    settings.focusY.coerceIn(0f, 1f)
+                )
+
+                val cropWidth =
+                    "if(gt(iw/ih,$ratioText),trunc(ih*$ratioText/2)*2,iw)"
+                val cropHeight =
+                    "if(gt(iw/ih,$ratioText),ih,trunc(iw/$ratioText/2)*2)"
+                val cropX =
+                    "max(0,min(iw-ow,iw*$focusX-ow/2))"
+                val cropY =
+                    "max(0,min(ih-oh,ih*$focusY-oh/2))"
+
+                add(
+                    "crop=$cropWidth:$cropHeight:$cropX:$cropY"
+                )
+            }
+
             add("fps=$fps")
+
             settings.maxSide?.let { side ->
                 val safeSide = side.coerceIn(128, 2160)
                 add(
