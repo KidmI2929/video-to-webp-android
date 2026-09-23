@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.kidmi.videotowebp"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.kidmi.videotowebp"
