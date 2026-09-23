@@ -131,28 +131,31 @@ class ConversionEngine(private val context: Context) {
         val startText = String.format(Locale.US, "%.3f", startSeconds)
         val durationText = String.format(Locale.US, "%.3f", durationSeconds)
 
-        val command = buildString {
-            append("-hide_banner -y ")
-            append("-ss ").append(startText).append(' ')
-            append("-i ").append(quote(input)).append(' ')
-            append("-t ").append(durationText).append(' ')
-            append("-an ")
-            append("-vf ").append(quote(filters)).append(' ')
-            append("-c:v libwebp ")
-            append("-lossless ").append(lossless).append(' ')
-            append("-quality ").append(quality).append(' ')
-            append("-compression_level ").append(compressionLevel).append(' ')
-            append("-preset picture ")
-            append("-loop ").append(loop).append(' ')
-            append("-threads 0 ")
-            append(quote(output))
-        }
+        val arguments = mutableListOf(
+            "-hide_banner",
+            "-loglevel", "error",
+            "-nostdin",
+            "-y",
+            "-ss", startText,
+            "-i", input,
+            "-t", durationText,
+            "-an",
+            "-vf", filters,
+            "-c:v", "libwebp",
+            "-lossless", lossless.toString(),
+            "-quality", quality.toString(),
+            "-compression_level", compressionLevel.toString(),
+            "-preset", "picture",
+            "-loop", loop.toString(),
+            "-threads", "0",
+            output
+        )
 
         post { onStatus(speedLabel + " · 네이티브 FFmpeg 변환 중…") }
         post { onProgress(0.01f) }
 
-        val session = FFmpegKit.executeAsync(
-            command,
+        val session = FFmpegKit.executeWithArgumentsAsync(
+            arguments.toTypedArray(),
             { completed ->
                 sessionId = null
 
@@ -279,14 +282,6 @@ class ConversionEngine(private val context: Context) {
         } catch (_: Exception) {
             0L
         }
-    }
-
-    private fun quote(value: String): String {
-        return """ +
-            value
-                .replace("\\", "\\\\")
-                .replace(""", "\\"") +
-            """
     }
 
     private fun post(block: () -> Unit) {
