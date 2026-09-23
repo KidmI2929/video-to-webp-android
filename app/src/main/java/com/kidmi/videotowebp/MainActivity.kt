@@ -63,6 +63,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -83,6 +84,7 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -200,6 +202,7 @@ private fun VideoToWebPApp(
     val prefs = remember {
         context.getSharedPreferences("video_to_webp", android.content.Context.MODE_PRIVATE)
     }
+    val scope = rememberCoroutineScope()
     val exoPlayer = remember {
         ExoPlayer.Builder(context).build().apply {
             repeatMode = Player.REPEAT_MODE_OFF
@@ -366,6 +369,9 @@ private fun VideoToWebPApp(
     var result by remember { mutableStateOf<ConversionResult?>(null) }
     var selectedResultPart by remember { mutableIntStateOf(0) }
     var error by remember { mutableStateOf<String?>(null) }
+    var batchUris by remember {
+        mutableStateOf<List<Uri>>(emptyList())
+    }
     var selectedTab by rememberSaveable {
         mutableIntStateOf(0)
     }
@@ -397,6 +403,31 @@ private fun VideoToWebPApp(
             trackingPreviewProgress = 0f
             videoUri = uri
             currentPositionMs = 0L
+        }
+    }
+
+    val batchPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            val unique = uris.distinct()
+
+            unique.forEach { uri ->
+                try {
+                    context.contentResolver
+                        .takePersistableUriPermission(
+                            uri,
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        )
+                } catch (_: Throwable) {
+                }
+            }
+
+            batchUris = unique
+            status =
+                "배치 큐에 " +
+                    unique.size +
+                    "개 영상 추가"
         }
     }
 
@@ -748,6 +779,296 @@ private fun VideoToWebPApp(
         )
     }
 
+    fun startBatchConversion() {
+        val queue = batchUris
+        if (queue.isEmpty()) {
+            startConversion()
+            return
+        }
+
+        subjectTracker.cancel()
+        engine.cancel()
+        exoPlayer.pause()
+
+        converting = true
+        progress = 0f
+        result = null
+        selectedResultPart = 0
+        error = null
+
+        val allParts =
+            mutableListOf<ConversionPartResult>()
+        val batchStartedAt =
+            android.os.SystemClock
+                .elapsedRealtime()
+
+        var queueIndex = 0
+
+        fun finishBatch() {
+            converting = false
+            progress = 1f
+
+            result = ConversionResult(
+                parts = allParts.toList(),
+                totalSizeBytes =
+                    allParts.sumOf {
+                        it.sizeBytes
+                    },
+                elapsedMs =
+                    android.os.SystemClock
+                        .elapsedRealtime() -
+                        batchStartedAt
+            )
+
+            selectedResultPart = 0
+            selectedTab = 3
+            status =
+                "배치 변환 완료 · " +
+                    queue.size +
+                    "개 영상"
+        }
+
+        lateinit var convertNext: () -> Unit
+
+        convertNext = {
+            if (queueIndex >= queue.size) {
+                finishBatch()
+            } else {
+                val currentUri =
+                    queue[queueIndex]
+
+                status =
+                    "배치 " +
+                        (queueIndex + 1) +
+                        "/" +
+                        queue.size +
+                        " · 영상 정보 읽는 중…"
+
+                scope.launch {
+                    val currentInfo =
+                        try {
+                            withContext(
+                                Dispatchers.IO
+                            ) {
+                                readVideoInfo(
+                                    context,
+                                    currentUri
+                                )
+                            }
+                        } catch (e: Throwable) {
+                            converting = false
+                            progress = 0f
+                            error =
+                                "배치 " +
+                                    (queueIndex + 1) +
+                                    " 영상 정보를 읽지 못했습니다. " +
+                                    (
+                                        e.message
+                                            ?: e.javaClass.simpleName
+                                        )
+                            status = "배치 변환 실패"
+                            return@launch
+                        }
+
+                    val itemStartMs = 0L
+                    val itemEndMs =
+                        currentInfo.durationMs
+                            .coerceAtLeast(100L)
+
+                    fun runBatchEngine(
+                        track:
+                            List<FocusKeyframe>
+                    ) {
+                        val base =
+                            queueIndex.toFloat() /
+                                queue.size
+                        val span =
+                            1f /
+                                queue.size
+
+                        engine.convert(
+                            sourceUri =
+                                currentUri,
+                            settings =
+                                ConversionSettings(
+                                    startMs =
+                                        itemStartMs,
+                                    endMs =
+                                        itemEndMs,
+                                    fps = fps,
+                                    quality =
+                                        quality,
+                                    maxSide =
+                                        maxSide,
+                                    lossless =
+                                        lossless,
+                                    loopForever =
+                                        loopForever,
+                                    speed =
+                                        speed,
+                                    outputTreeUri =
+                                        outputTreeUri,
+                                    splitMode =
+                                        splitMode,
+                                    splitCount =
+                                        splitCount,
+                                    targetPartSizeMb =
+                                        targetPartSizeMb,
+                                    targetTotalSizeMb =
+                                        if (
+                                            targetTotalSizeEnabled &&
+                                            splitMode ==
+                                                SplitMode.NONE &&
+                                            !lossless
+                                        ) {
+                                            targetTotalSizeMb
+                                        } else {
+                                            null
+                                        },
+                                    cropAspect =
+                                        cropAspect,
+                                    focusX =
+                                        focusX,
+                                    focusY =
+                                        focusY,
+                                    cropZoom =
+                                        cropZoom,
+                                    focusTrack =
+                                        track
+                                ),
+                            onStatus = {
+                                status =
+                                    "배치 " +
+                                        (queueIndex + 1) +
+                                        "/" +
+                                        queue.size +
+                                        " · " +
+                                        it
+                            },
+                            onProgress = {
+                                progress =
+                                    (
+                                        base +
+                                            it.coerceIn(
+                                                0f,
+                                                1f
+                                            ) *
+                                            span
+                                        )
+                                        .coerceIn(
+                                            0f,
+                                            1f
+                                        )
+                            },
+                            onComplete = {
+                                allParts +=
+                                    it.parts
+                                queueIndex += 1
+                                convertNext()
+                            },
+                            onError = {
+                                converting = false
+                                progress = 0f
+                                error =
+                                    "배치 " +
+                                        (queueIndex + 1) +
+                                        " 실패\n" +
+                                        it
+                                status =
+                                    "배치 변환 실패"
+                            },
+                            onCancelled = {
+                                converting = false
+                                progress = 0f
+                                status =
+                                    "배치 변환이 취소되었습니다."
+                            }
+                        )
+                    }
+
+                    val hasCrop =
+                        cropAspect !=
+                            CropAspect.ORIGINAL ||
+                            cropZoom > 1.001f
+
+                    if (
+                        trackingMode ==
+                            TrackingMode.FIXED ||
+                        !hasCrop
+                    ) {
+                        runBatchEngine(
+                            emptyList()
+                        )
+                    } else {
+                        subjectTracker.analyze(
+                            sourceUri =
+                                currentUri,
+                            startMs =
+                                itemStartMs,
+                            endMs =
+                                itemEndMs,
+                            initialFocusX =
+                                focusX,
+                            initialFocusY =
+                                focusY,
+                            mode =
+                                trackingMode,
+                            onStatus = {
+                                status =
+                                    "배치 " +
+                                        (queueIndex + 1) +
+                                        "/" +
+                                        queue.size +
+                                        " · " +
+                                        it
+                            },
+                            onProgress = {
+                                val base =
+                                    queueIndex
+                                        .toFloat() /
+                                        queue.size
+                                val span =
+                                    1f /
+                                        queue.size
+
+                                progress =
+                                    (
+                                        base +
+                                            it.coerceIn(
+                                                0f,
+                                                1f
+                                            ) *
+                                            span *
+                                            0.20f
+                                        )
+                                        .coerceIn(
+                                            0f,
+                                            1f
+                                        )
+                            },
+                            onComplete = {
+                                runBatchEngine(it)
+                            },
+                            onError = {
+                                runBatchEngine(
+                                    emptyList()
+                                )
+                            },
+                            onCancelled = {
+                                converting = false
+                                progress = 0f
+                                status =
+                                    "배치 변환이 취소되었습니다."
+                            }
+                        )
+                    }
+                }
+            }
+        }
+
+        convertNext()
+    }
+
     fun analyzeTrackingPreview() {
         val uri = videoUri ?: return
         val info = videoInfo ?: return
@@ -830,8 +1151,24 @@ private fun VideoToWebPApp(
                         converting = converting,
                         progress = progress,
                         status = status,
-                        enabled = videoInfo != null,
-                        onConvert = { startConversion() },
+                        enabled =
+                            videoInfo != null ||
+                                batchUris.isNotEmpty(),
+                        actionLabel =
+                            if (batchUris.isNotEmpty()) {
+                                "배치 " +
+                                    batchUris.size +
+                                    "개 Animated WebP 만들기"
+                            } else {
+                                "Animated WebP 만들기"
+                            },
+                        onConvert = {
+                            if (batchUris.isNotEmpty()) {
+                                startBatchConversion()
+                            } else {
+                                startConversion()
+                            }
+                        },
                         onCancel = {
                             subjectTracker.cancel()
                             engine.cancel()
@@ -1228,6 +1565,20 @@ private fun VideoToWebPApp(
                                     prefs.edit()
                                         .remove("output_tree_uri")
                                         .apply()
+                                }
+                            )
+
+                            BatchQueueCard(
+                                queue = batchUris,
+                                enabled = !converting,
+                                onChoose = {
+                                    batchPicker.launch(
+                                        arrayOf("video/*")
+                                    )
+                                },
+                                onClear = {
+                                    batchUris =
+                                        emptyList()
                                 }
                             )
 
