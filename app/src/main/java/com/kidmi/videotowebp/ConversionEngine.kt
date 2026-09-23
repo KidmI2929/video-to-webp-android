@@ -56,6 +56,7 @@ data class ConversionSettings(
     val splitMode: SplitMode = SplitMode.NONE,
     val splitCount: Int = 2,
     val targetPartSizeMb: Int = 8,
+    val targetTotalSizeMb: Int? = null,
     val cropAspect: CropAspect = CropAspect.ORIGINAL,
     val focusX: Float = 0.5f,
     val focusY: Float = 0.5f,
@@ -121,8 +122,12 @@ class ConversionEngine(private val context: Context) {
         }
 
         var cachedInput: File? = null
+        val reusableInput =
+            settings.splitMode != SplitMode.NONE ||
+                settings.targetTotalSizeMb != null
+
         val input = try {
-            if (settings.splitMode == SplitMode.NONE) {
+            if (!reusableInput) {
                 FFmpegKitConfig.getSafParameterForRead(context, sourceUri)
             } else {
                 post {
@@ -151,6 +156,28 @@ class ConversionEngine(private val context: Context) {
             "yyyyMMdd_HHmmss",
             Locale.US
         ).format(Date())
+
+        if (
+            settings.splitMode == SplitMode.NONE &&
+            settings.targetTotalSizeMb != null &&
+            !settings.lossless
+        ) {
+            convertSingleToTargetSize(
+                input = input,
+                settings = settings,
+                startMs = startMs,
+                endMs = endMs,
+                stamp = stamp,
+                startedAt = startedAt,
+                onStatus = onStatus,
+                onProgress = onProgress,
+                onComplete = onComplete,
+                onError = onError,
+                onCancelled = onCancelled,
+                cachedInput = cachedInput
+            )
+            return
+        }
 
         when (settings.splitMode) {
             SplitMode.SIZE -> convertByTargetSize(
@@ -184,6 +211,299 @@ class ConversionEngine(private val context: Context) {
                 cachedInput = cachedInput
             )
         }
+    }
+
+    private fun convertSingleToTargetSize(
+        input: String,
+        settings: ConversionSettings,
+        startMs: Long,
+        endMs: Long,
+        stamp: String,
+        startedAt: Long,
+        onStatus: (String) -> Unit,
+        onProgress: (Float) -> Unit,
+        onComplete: (ConversionResult) -> Unit,
+        onError: (String) -> Unit,
+        onCancelled: () -> Unit,
+        cachedInput: File?
+    ) {
+        val targetBytes =
+            settings.targetTotalSizeMb
+                ?.coerceIn(1, 100)
+                ?.times(1024L * 1024L)
+                ?: run {
+                    cachedInput?.delete()
+                    post { onError("목표 전체 용량이 올바르지 않습니다.") }
+                    return
+                }
+
+        val durationMs = endMs - startMs
+        var attempt = 0
+        var currentQuality =
+            settings.quality.coerceIn(10, 100)
+        var currentMaxSide = settings.maxSide
+        var reportedProgress = 0.01f
+
+        fun report(value: Float) {
+            if (value > reportedProgress) {
+                reportedProgress = value.coerceAtMost(0.97f)
+                post { onProgress(reportedProgress) }
+            }
+        }
+
+        fun finishWithTemp(
+            temp: File,
+            actualQuality: Int,
+            actualMaxSide: Int?
+        ) {
+            if (cancelled.get()) {
+                temp.delete()
+                cachedInput?.delete()
+                post(onCancelled)
+                return
+            }
+
+            val fileName =
+                buildFileName(
+                    stamp = stamp,
+                    partNumber = 1,
+                    includePartNumber = false
+                )
+
+            val target = try {
+                createOutputTarget(
+                    fileName,
+                    settings.outputTreeUri
+                )
+            } catch (e: Throwable) {
+                temp.delete()
+                cachedInput?.delete()
+                post {
+                    onError(
+                        e.message
+                            ?: "저장 파일을 만들 수 없습니다."
+                    )
+                }
+                return
+            }
+
+            try {
+                copyFileToUri(temp, target.uri)
+                finalizeOutputTarget(target)
+
+                val size = querySize(target.uri)
+                temp.delete()
+                cachedInput?.delete()
+
+                val part = ConversionPartResult(
+                    uri = target.uri,
+                    fileName =
+                        queryDisplayName(
+                            context,
+                            target.uri
+                        ) ?: fileName,
+                    sizeBytes = size,
+                    durationMs = durationMs,
+                    index = 1
+                )
+
+                val note =
+                    if (size > targetBytes * 1.08) {
+                        " · 목표보다 큼"
+                    } else {
+                        ""
+                    }
+
+                post {
+                    onStatus(
+                        "목표 용량 맞춤 완료 · Q$actualQuality" +
+                            (
+                                actualMaxSide?.let { side ->
+                                    " · " + side + "p"
+                                } ?: ""
+                                ) +
+                            note
+                    )
+                }
+
+                complete(
+                    listOf(part),
+                    startedAt,
+                    onProgress,
+                    onComplete
+                )
+            } catch (e: Throwable) {
+                temp.delete()
+                cachedInput?.delete()
+                deleteDestination(target.uri)
+                post {
+                    onError(
+                        "목표 용량 결과 저장 실패. " +
+                            (
+                                e.message
+                                    ?: e.javaClass.simpleName
+                                )
+                    )
+                }
+            }
+        }
+
+        lateinit var encodeAttempt: () -> Unit
+
+        encodeAttempt = {
+            if (cancelled.get()) {
+                cachedInput?.delete()
+                post(onCancelled)
+            } else {
+                attempt += 1
+
+                val temp = File(
+                    context.cacheDir,
+                    "target_total_" +
+                        System.nanoTime() +
+                        ".webp"
+                )
+                temp.delete()
+
+                val adjusted =
+                    settings.copy(
+                        quality = currentQuality,
+                        maxSide = currentMaxSide,
+                        targetTotalSizeMb = null
+                    )
+
+                post {
+                    onStatus(
+                        "목표 " +
+                            settings.targetTotalSizeMb +
+                            "MB 맞추는 중 · " +
+                            attempt +
+                            "/5 · Q" +
+                            currentQuality
+                    )
+                }
+
+                runEncode(
+                    input = input,
+                    output = temp.absolutePath,
+                    segmentStartMs = startMs,
+                    segmentDurationMs = durationMs,
+                    settings = adjusted,
+                    onStatistics = { processedMs ->
+                        val local =
+                            (
+                                processedMs.toDouble() /
+                                    durationMs.coerceAtLeast(1L)
+                                )
+                                .coerceIn(0.0, 0.99)
+
+                        val attemptBase =
+                            (attempt - 1) * 0.16
+
+                        report(
+                            (
+                                0.02 +
+                                    attemptBase +
+                                    local * 0.15
+                                )
+                                .coerceAtMost(0.94)
+                                .toFloat()
+                        )
+                    },
+                    onSuccess = {
+                        val size = temp.length()
+
+                        if (size <= 0L) {
+                            temp.delete()
+                            cachedInput?.delete()
+                            post {
+                                onError(
+                                    "목표 용량용 WebP 생성에 실패했습니다."
+                                )
+                            }
+                            return@runEncode
+                        }
+
+                        val oversized =
+                            size > targetBytes * 1.05
+
+                        if (
+                            oversized &&
+                            attempt < 5
+                        ) {
+                            val ratio =
+                                targetBytes.toDouble() /
+                                    size.toDouble()
+
+                            val nextQuality =
+                                (
+                                    currentQuality *
+                                        kotlin.math
+                                            .sqrt(ratio) *
+                                        0.94
+                                    )
+                                    .toInt()
+                                    .coerceIn(10, 100)
+
+                            if (
+                                nextQuality <
+                                currentQuality - 1
+                            ) {
+                                currentQuality =
+                                    nextQuality
+                            } else {
+                                val baseSide =
+                                    currentMaxSide
+                                        ?: 1080
+                                currentMaxSide =
+                                    (
+                                        baseSide * 0.84
+                                        )
+                                        .toInt()
+                                        .coerceAtLeast(240)
+                            }
+
+                            if (
+                                currentQuality <= 12 &&
+                                size > targetBytes * 1.25
+                            ) {
+                                val baseSide =
+                                    currentMaxSide
+                                        ?: 1080
+                                currentMaxSide =
+                                    (
+                                        baseSide * 0.80
+                                        )
+                                        .toInt()
+                                        .coerceAtLeast(240)
+                            }
+
+                            temp.delete()
+                            encodeAttempt()
+                        } else {
+                            finishWithTemp(
+                                temp,
+                                currentQuality,
+                                currentMaxSide
+                            )
+                        }
+                    },
+                    onFailure = { detail ->
+                        temp.delete()
+                        cachedInput?.delete()
+                        post { onError(detail) }
+                    },
+                    onCancelled = {
+                        temp.delete()
+                        cachedInput?.delete()
+                        post(onCancelled)
+                    }
+                )
+            }
+        }
+
+        post { onProgress(0.01f) }
+        encodeAttempt()
     }
 
     private fun convertFixedSegments(
