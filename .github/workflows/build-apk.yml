@@ -68,11 +68,18 @@ jobs:
           unzip -q "$GITHUB_WORKSPACE/.ci-cache/ffmpeg-kit-custom.aar"
           strings jni/arm64-v8a/libavcodec.so | grep -F -- '--enable-libwebp'
 
-      - name: Install custom FFmpeg AAR into app
+      - name: Install custom FFmpeg AAR and C++ runtime into app
         shell: bash
         run: |
+          set -euxo pipefail
           mkdir -p app/libs
           cp .ci-cache/ffmpeg-kit-custom.aar app/libs/ffmpeg-kit-custom.aar
+
+          # FFmpeg's arm64 libavcodec.so links against libc++_shared.so.
+          # The custom AAR does not bundle it, so package the matching NDK runtime.
+          mkdir -p app/src/main/jniLibs/arm64-v8a
+          cp "$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" \
+             app/src/main/jniLibs/arm64-v8a/libc++_shared.so
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -89,13 +96,17 @@ jobs:
           rm -rf /tmp/apk-check
           mkdir -p /tmp/apk-check
           cd /tmp/apk-check
-          unzip -q "$GITHUB_WORKSPACE/app/build/outputs/apk/debug/app-debug.apk"             'lib/arm64-v8a/libavcodec.so'
+          unzip -q "$GITHUB_WORKSPACE/app/build/outputs/apk/debug/app-debug.apk" \
+            'lib/arm64-v8a/libavcodec.so' \
+            'lib/arm64-v8a/libc++_shared.so'
+          test -s lib/arm64-v8a/libc++_shared.so
           strings lib/arm64-v8a/libavcodec.so | grep -F -- '--enable-libwebp'
+          readelf -d lib/arm64-v8a/libavcodec.so | grep -F 'Shared library: [libc++_shared.so]'
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: VideoToWebP-v0.5-fast-apk
+          name: VideoToWebP-v0.5.1-crashfix-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
