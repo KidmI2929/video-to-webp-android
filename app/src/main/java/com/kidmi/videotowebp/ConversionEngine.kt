@@ -87,7 +87,8 @@ class ConversionEngine(private val context: Context) {
         onProgress: (Float) -> Unit,
         onComplete: (ConversionResult) -> Unit,
         onError: (String) -> Unit,
-        onCancelled: () -> Unit
+        onCancelled: () -> Unit,
+        cachedInput: File?
     ) {
         cancel()
         cancelled.set(false)
@@ -105,12 +106,24 @@ class ConversionEngine(private val context: Context) {
             return
         }
 
+        var cachedInput: File? = null
         val input = try {
-            FFmpegKitConfig.getSafParameterForRead(context, sourceUri)
+            if (settings.splitMode == SplitMode.NONE) {
+                FFmpegKitConfig.getSafParameterForRead(context, sourceUri)
+            } else {
+                post {
+                    onStatus("분할 변환을 위해 영상을 준비 중…")
+                    onProgress(0.005f)
+                }
+                copySourceToCache(sourceUri).also {
+                    cachedInput = it
+                }.absolutePath
+            }
         } catch (e: Throwable) {
+            cachedInput?.delete()
             post {
                 onError(
-                    "FFmpeg 초기화에 실패했습니다. " +
+                    "입력 영상을 준비하지 못했습니다. " +
                         (e.message ?: e.javaClass.simpleName)
                 )
             }
@@ -137,7 +150,8 @@ class ConversionEngine(private val context: Context) {
                 onProgress = onProgress,
                 onComplete = onComplete,
                 onError = onError,
-                onCancelled = onCancelled
+                onCancelled = onCancelled,
+                cachedInput = cachedInput
             )
 
             SplitMode.NONE,
@@ -152,7 +166,8 @@ class ConversionEngine(private val context: Context) {
                 onProgress = onProgress,
                 onComplete = onComplete,
                 onError = onError,
-                onCancelled = onCancelled
+                onCancelled = onCancelled,
+                cachedInput = cachedInput
             )
         }
     }
@@ -168,7 +183,8 @@ class ConversionEngine(private val context: Context) {
         onProgress: (Float) -> Unit,
         onComplete: (ConversionResult) -> Unit,
         onError: (String) -> Unit,
-        onCancelled: () -> Unit
+        onCancelled: () -> Unit,
+        cachedInput: File?
     ) {
         val totalDurationMs = endMs - startMs
         val segments = if (settings.splitMode == SplitMode.COUNT) {
@@ -199,12 +215,22 @@ class ConversionEngine(private val context: Context) {
 
         val parts = mutableListOf<ConversionPartResult>()
 
+        var inputCleaned = false
+
+        fun cleanupInput() {
+            if (!inputCleaned) {
+                inputCleaned = true
+                cachedInput?.delete()
+            }
+        }
+
         fun cleanup() {
             parts.forEach { deleteDestination(it.uri) }
             parts.clear()
         }
 
         fun fail(message: String, current: Uri? = null) {
+            cleanupInput()
             current?.let { deleteDestination(it) }
             cleanup()
             post { onError(message) }
@@ -212,12 +238,14 @@ class ConversionEngine(private val context: Context) {
 
         fun encode(index: Int) {
             if (cancelled.get()) {
+                cleanupInput()
                 cleanup()
                 post(onCancelled)
                 return
             }
 
             if (index >= segments.size) {
+                cleanupInput()
                 complete(parts, startedAt, onProgress, onComplete)
                 return
             }
@@ -301,6 +329,7 @@ class ConversionEngine(private val context: Context) {
                 },
                 onCancelled = {
                     deleteDestination(target.uri)
+                    cleanupInput()
                     cleanup()
                     post(onCancelled)
                 }
@@ -322,7 +351,8 @@ class ConversionEngine(private val context: Context) {
         onProgress: (Float) -> Unit,
         onComplete: (ConversionResult) -> Unit,
         onError: (String) -> Unit,
-        onCancelled: () -> Unit
+        onCancelled: () -> Unit,
+        cachedInput: File?
     ) {
         val totalDurationMs = endMs - startMs
         val targetBytes =
@@ -339,7 +369,15 @@ class ConversionEngine(private val context: Context) {
         var partNumber = 1
         var bytesPerMsEstimate: Double? = null
         var reportedProgress = 0.01f
+        var inputCleaned = false
         lateinit var encodeNextPart: () -> Unit
+
+        fun cleanupInput() {
+            if (!inputCleaned) {
+                inputCleaned = true
+                cachedInput?.delete()
+            }
+        }
 
         fun reportProgress(value: Float) {
             if (value > reportedProgress) {
@@ -354,6 +392,7 @@ class ConversionEngine(private val context: Context) {
         }
 
         fun fail(message: String) {
+            cleanupInput()
             cleanup()
             post { onError(message) }
         }
@@ -365,6 +404,7 @@ class ConversionEngine(private val context: Context) {
         ) {
             if (cancelled.get()) {
                 temp.delete()
+                cleanupInput()
                 cleanup()
                 post(onCancelled)
                 return
@@ -426,6 +466,7 @@ class ConversionEngine(private val context: Context) {
             attempt: Int
         ) {
             if (cancelled.get()) {
+                cleanupInput()
                 cleanup()
                 post(onCancelled)
                 return
@@ -531,6 +572,7 @@ class ConversionEngine(private val context: Context) {
                 },
                 onCancelled = {
                     temp.delete()
+                    cleanupInput()
                     cleanup()
                     post(onCancelled)
                 }
@@ -546,6 +588,7 @@ class ConversionEngine(private val context: Context) {
 
                 when {
                     remaining <= 50L -> {
+                        cleanupInput()
                         complete(
                             parts,
                             startedAt,
@@ -835,6 +878,40 @@ class ConversionEngine(private val context: Context) {
             uri = uri,
             pendingMediaStore = true
         )
+    }
+
+    private fun copySourceToCache(
+        sourceUri: Uri
+    ): File {
+        val displayName = queryDisplayName(context, sourceUri).orEmpty()
+        val extension = displayName
+            .substringAfterLast('.', "mp4")
+            .filter { it.isLetterOrDigit() }
+            .take(8)
+            .ifBlank { "mp4" }
+
+        val target = File(
+            context.cacheDir,
+            "split_source_${System.nanoTime()}.$extension"
+        )
+
+        context.contentResolver
+            .openInputStream(sourceUri)
+            .use { input ->
+                requireNotNull(input) {
+                    "선택한 영상을 열 수 없습니다."
+                }
+
+                target.outputStream().use { output ->
+                    input.copyTo(output, DEFAULT_BUFFER_SIZE)
+                }
+            }
+
+        require(target.length() > 0L) {
+            "선택한 영상이 비어 있습니다."
+        }
+
+        return target
     }
 
     private fun copyFileToUri(
