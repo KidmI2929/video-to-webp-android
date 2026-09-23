@@ -1,3 +1,16 @@
+
+## v0.7
+
+- Motion WebP 전용 adaptive 앱 아이콘 / Android 13 themed icon
+- 터보 변환 모드: compression_level 0 + fast_bilinear
+- Lossy WebP에 yuv420p 빠른 경로
+- 빠른 프리셋: 초고속 / 추천 / 고화질
+- 현재 재생 위치를 IN / OUT으로 즉시 지정
+- 출력 설정과 분할 설정 자동 저장
+- 변환 중 화면 꺼짐 방지
+- 결과 파일 열기
+- 선택 파트 개별 공유 / 전체 파트 공유
+
 # Motion WebP — Video → Animated WebP
 
 Android에서 영상을 확인하고 원하는 구간을 잘라 **Animated WebP**로 빠르게 변환하는 로컬 앱입니다.
