@@ -748,6 +748,79 @@ private fun VideoToWebPApp(
         )
     }
 
+    fun analyzeTrackingPreview() {
+        val uri = videoUri ?: return
+        val info = videoInfo ?: return
+
+        if (trackingMode == TrackingMode.FIXED) {
+            previewTrack = emptyList()
+            trackingPreviewProgress = 0f
+            status = "고정 포커스 모드입니다."
+            return
+        }
+
+        if (
+            cropAspect == CropAspect.ORIGINAL &&
+            cropZoom <= 1.001f
+        ) {
+            status =
+                "화면비를 바꾸거나 크롭 확대를 적용한 뒤 추적을 분석하세요."
+            return
+        }
+
+        val startMs =
+            (startSec * 1000f)
+                .toLong()
+                .coerceAtLeast(0L)
+        val endMs =
+            (endSec * 1000f)
+                .toLong()
+                .coerceAtMost(info.durationMs)
+
+        subjectTracker.cancel()
+        trackingPreviewBusy = true
+        trackingPreviewProgress = 0f
+        previewTrack = emptyList()
+
+        subjectTracker.analyze(
+            sourceUri = uri,
+            startMs = startMs,
+            endMs = endMs,
+            initialFocusX = focusX,
+            initialFocusY = focusY,
+            mode = trackingMode,
+            onStatus = {
+                status = "미리보기 · " + it
+            },
+            onProgress = {
+                trackingPreviewProgress =
+                    it.coerceIn(0f, 1f)
+            },
+            onComplete = { points ->
+                trackingPreviewBusy = false
+                trackingPreviewProgress = 1f
+                previewTrack = points
+                status = if (points.isEmpty()) {
+                    "추적 대상을 찾지 못했습니다."
+                } else {
+                    "추적 경로 " +
+                        points.size +
+                        "개 지점 분석 완료"
+                }
+            },
+            onError = {
+                trackingPreviewBusy = false
+                trackingPreviewProgress = 0f
+                status = it
+            },
+            onCancelled = {
+                trackingPreviewBusy = false
+                trackingPreviewProgress = 0f
+                status = "추적 미리보기가 취소되었습니다."
+            }
+        )
+    }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
@@ -830,6 +903,7 @@ private fun VideoToWebPApp(
                                 cropAspect = cropAspect,
                                 focusX = focusX,
                                 focusY = focusY,
+                                cropZoom = cropZoom,
                                 converting = converting,
                                 onPickAnother = {
                                     videoPicker.launch(arrayOf("video/*"))
@@ -900,6 +974,25 @@ private fun VideoToWebPApp(
                                     focusY = y.coerceIn(0f, 1f)
                                 }
                             )
+
+                            videoUri?.let { currentUri ->
+                                TimelineThumbnailStrip(
+                                    context = context,
+                                    uri = currentUri,
+                                    startMs =
+                                        (startSec * 1000f)
+                                            .toLong(),
+                                    endMs =
+                                        (endSec * 1000f)
+                                            .toLong(),
+                                    currentMs =
+                                        currentPositionMs,
+                                    onSeek = { target ->
+                                        exoPlayer.pause()
+                                        seekPlayer(target)
+                                    }
+                                )
+                            }
                         }
                         Spacer(Modifier.height(8.dp))
                     }
@@ -927,6 +1020,18 @@ private fun VideoToWebPApp(
                                 cropAspect = cropAspect,
                                 focusX = focusX,
                                 focusY = focusY,
+                                cropZoom = cropZoom,
+                                trackingPath =
+                                    mergeTrackingKeyframes(
+                                        previewTrack,
+                                        manualKeyframes,
+                                        (startSec * 1000f)
+                                            .toLong(),
+                                        (endSec * 1000f)
+                                            .toLong()
+                                    ),
+                                manualKeyframes =
+                                    manualKeyframes,
                                 converting = converting,
                                 onFocusChange = { x, y ->
                                     focusX = x.coerceIn(0f, 1f)
@@ -938,8 +1043,11 @@ private fun VideoToWebPApp(
                                 cropAspect = cropAspect,
                                 focusX = focusX,
                                 focusY = focusY,
+                                cropZoom = cropZoom,
                                 trackingMode = trackingMode,
-                                enabled = !converting,
+                                enabled =
+                                    !converting &&
+                                        !trackingPreviewBusy,
                                 onCropAspectChange = {
                                     cropAspect = it
                                 },
@@ -947,8 +1055,80 @@ private fun VideoToWebPApp(
                                     focusX = x.coerceIn(0f, 1f)
                                     focusY = y.coerceIn(0f, 1f)
                                 },
+                                onCropZoomChange = {
+                                    cropZoom =
+                                        it.coerceIn(1f, 4f)
+                                },
+                                onResetCrop = {
+                                    cropZoom = 1f
+                                    focusX = 0.5f
+                                    focusY = 0.5f
+                                },
                                 onTrackingModeChange = {
                                     trackingMode = it
+                                }
+                            )
+
+                            TrackingEditorCard(
+                                currentPositionMs =
+                                    currentPositionMs,
+                                focusX = focusX,
+                                focusY = focusY,
+                                automaticPoints =
+                                    previewTrack,
+                                manualPoints =
+                                    manualKeyframes,
+                                analyzing =
+                                    trackingPreviewBusy,
+                                analysisProgress =
+                                    trackingPreviewProgress,
+                                enabled =
+                                    !converting,
+                                onAnalyze = {
+                                    analyzeTrackingPreview()
+                                },
+                                onAddManual = {
+                                    val point =
+                                        FocusKeyframe(
+                                            timeMs =
+                                                currentPositionMs,
+                                            x = focusX,
+                                            y = focusY
+                                        )
+
+                                    manualKeyframes =
+                                        (
+                                            manualKeyframes
+                                                .filter {
+                                                    kotlin.math.abs(
+                                                        it.timeMs -
+                                                            point.timeMs
+                                                    ) > 120L
+                                                } +
+                                                point
+                                            )
+                                            .sortedBy {
+                                                it.timeMs
+                                            }
+                                },
+                                onRemoveManual = { point ->
+                                    manualKeyframes =
+                                        manualKeyframes
+                                            .filterNot {
+                                                it == point
+                                            }
+                                },
+                                onClear = {
+                                    manualKeyframes =
+                                        emptyList()
+                                    previewTrack =
+                                        emptyList()
+                                    trackingPreviewProgress =
+                                        0f
+                                },
+                                onSeek = { timeMs ->
+                                    exoPlayer.pause()
+                                    seekPlayer(timeMs)
                                 }
                             )
                         }
@@ -993,6 +1173,48 @@ private fun VideoToWebPApp(
                                     speed = preset.speed
                                 }
                             )
+
+                            videoInfo?.let { currentInfo ->
+                                EstimateTargetCard(
+                                    info = currentInfo,
+                                    durationMs =
+                                        (
+                                            (endSec - startSec)
+                                                .coerceAtLeast(0.1f) *
+                                                1000f
+                                            )
+                                            .toLong(),
+                                    fps = fps,
+                                    quality = quality,
+                                    maxSide = maxSide,
+                                    lossless = lossless,
+                                    cropZoom = cropZoom,
+                                    speed = speed,
+                                    splitMode = splitMode,
+                                    enabled = !converting,
+                                    targetEnabled =
+                                        targetTotalSizeEnabled,
+                                    targetMb =
+                                        targetTotalSizeMb,
+                                    onTargetEnabledChange = {
+                                        targetTotalSizeEnabled =
+                                            it
+                                        if (it) {
+                                            splitMode =
+                                                SplitMode.NONE
+                                            lossless = false
+                                        }
+                                    },
+                                    onTargetMbChange = {
+                                        targetTotalSizeMb =
+                                            it.coerceIn(1, 100)
+                                    },
+                                    onApplyRecommendedQuality = {
+                                        quality =
+                                            it.coerceIn(10, 100)
+                                    }
+                                )
+                            }
 
                             StorageCard(
                                 folderName = folderName,
