@@ -215,18 +215,19 @@ class ConversionEngine(private val context: Context) {
                 post { onStatus("Animated WebP 마무리 중…") }
                 post { onProgress(0.92f) }
 
-                encoder.assemble(clipDurationMs, pendingUri)
-                finalizePending(pendingUri)
+                val completedUri = requireNotNull(pendingUri)
+                encoder.assemble(clipDurationMs, completedUri)
+                finalizePending(completedUri)
 
-                val fileName = queryDisplayName(context, pendingUri)
+                val fileName = queryDisplayName(context, completedUri)
                     ?: "VideoToWebP.webp"
-                val sizeBytes = querySize(pendingUri)
+                val sizeBytes = querySize(completedUri)
 
                 post { onProgress(1f) }
                 post {
                     onComplete(
                         ConversionResult(
-                            uri = pendingUri,
+                            uri = completedUri,
                             fileName = fileName,
                             sizeBytes = sizeBytes
                         )
