@@ -12,8 +12,8 @@ android {
         applicationId = "com.kidmi.videotowebp"
         minSdk = 29
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.4.0"
+        versionCode = 5
+        versionName = "0.5.0"
 
         ndk {
             abiFilters += "arm64-v8a"
@@ -41,6 +41,10 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
-    implementation("dev.ffmpegkit-maintained:ffmpeg-kit-full:8.1.8")
+
+    // Built by GitHub Actions with --enable-libwebp, ARM64 NEON and speed optimization.
+    implementation(files("libs/ffmpeg-kit-custom.aar"))
+    implementation("com.arthenica:smart-exception-java:0.2.1")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

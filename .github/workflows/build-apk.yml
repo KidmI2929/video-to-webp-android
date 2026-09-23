@@ -4,16 +4,14 @@ on:
   workflow_dispatch:
   push:
     branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
 
     steps:
-      - name: Checkout
+      - name: Checkout app
         uses: actions/checkout@v4
 
       - name: Set up Java 17
@@ -22,15 +20,59 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Ensure Android SDK 35
+      - name: Install Android SDK and NDK
         shell: bash
         run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          if [ ! -d "$ANDROID_HOME/platforms/android-35" ]; then
-            SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort -V | tail -1)"
-            yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
-            "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0"
-          fi
+          set -euxo pipefail
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort -V | tail -1)"
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER"             "platforms;android-35"             "build-tools;35.0.0"             "ndk;27.2.12479018"
+
+      - name: Install native build tools
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y             autoconf automake libtool pkg-config curl git nasm cmake gcc g++             gperf texinfo yasm bison autogen wget autopoint meson ninja-build             ragel groff gtk-doc-tools libtasn1-6-dev
+
+      - name: Cache custom FFmpegKit AAR
+        id: ffmpeg-cache
+        uses: actions/cache@v4
+        with:
+          path: .ci-cache/ffmpeg-kit-custom.aar
+          key: ffmpegkit-8.1-libwebp-arm64-speed-r1
+
+      - name: Build FFmpegKit with libwebp
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf /tmp/ffmpegkit-src
+          git clone --depth 1 https://github.com/ffmpegkit-maintained/ffmpeg.git /tmp/ffmpegkit-src
+          cd /tmp/ffmpegkit-src/android-8.1-lts
+
+          export ANDROID_SDK_ROOT="$ANDROID_HOME"
+          export ANDROID_NDK_ROOT="$ANDROID_HOME/ndk/27.2.12479018"
+
+          ./android.sh             --speed             --api-level=29             --enable-libwebp             --enable-android-media-codec             --disable-arm-v7a             --disable-arm-v7a-neon             --disable-x86             --disable-x86-64
+
+          mkdir -p "$GITHUB_WORKSPACE/.ci-cache"
+          cp prebuilt/bundle-android-aar/ffmpeg-kit/ffmpeg-kit.aar              "$GITHUB_WORKSPACE/.ci-cache/ffmpeg-kit-custom.aar"
+
+      - name: Verify custom FFmpeg has libwebp
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf /tmp/ffmpeg-aar-check
+          mkdir -p /tmp/ffmpeg-aar-check
+          cd /tmp/ffmpeg-aar-check
+          unzip -q "$GITHUB_WORKSPACE/.ci-cache/ffmpeg-kit-custom.aar"
+          strings jni/arm64-v8a/libavcodec.so | grep -F -- '--enable-libwebp'
+
+      - name: Install custom FFmpeg AAR into app
+        shell: bash
+        run: |
+          mkdir -p app/libs
+          cp .ci-cache/ffmpeg-kit-custom.aar app/libs/ffmpeg-kit-custom.aar
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -40,10 +82,20 @@ jobs:
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
 
+      - name: Verify packaged APK FFmpeg configuration
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf /tmp/apk-check
+          mkdir -p /tmp/apk-check
+          cd /tmp/apk-check
+          unzip -q "$GITHUB_WORKSPACE/app/build/outputs/apk/debug/app-debug.apk"             'lib/arm64-v8a/libavcodec.so'
+          strings lib/arm64-v8a/libavcodec.so | grep -F -- '--enable-libwebp'
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: VideoToWebP-debug-apk
+          name: VideoToWebP-v0.5-fast-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
