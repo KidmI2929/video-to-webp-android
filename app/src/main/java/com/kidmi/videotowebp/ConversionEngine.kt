@@ -31,7 +31,7 @@ data class ConversionSettings(
     val maxSide: Int?,
     val lossless: Boolean,
     val loopForever: Boolean,
-    val speed: ConversionSpeed = ConversionSpeed.BALANCED
+    val speed: ConversionSpeed = ConversionSpeed.FAST
 )
 
 data class ConversionResult(
