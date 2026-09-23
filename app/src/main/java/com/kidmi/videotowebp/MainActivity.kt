@@ -125,6 +125,14 @@ private data class ResolutionOption(
     val maxSide: Int?
 )
 
+private data class QuickPreset(
+    val label: String,
+    val maxSide: Int?,
+    val fps: Int,
+    val quality: Int,
+    val speed: ConversionSpeed
+)
+
 @Composable
 fun VideoToWebPApp() {
     val context = LocalContext.current
@@ -147,16 +155,52 @@ fun VideoToWebPApp() {
     var currentPositionMs by remember { mutableLongStateOf(0L) }
     var isPlaying by remember { mutableStateOf(false) }
 
-    var fps by remember { mutableIntStateOf(15) }
-    var quality by remember { mutableIntStateOf(80) }
-    var maxSide by remember { mutableStateOf<Int?>(720) }
-    var lossless by remember { mutableStateOf(false) }
-    var loopForever by remember { mutableStateOf(true) }
-    var speed by remember { mutableStateOf(ConversionSpeed.FAST) }
+    var fps by remember {
+        mutableIntStateOf(prefs.getInt("fps", 15).coerceIn(5, 30))
+    }
+    var quality by remember {
+        mutableIntStateOf(prefs.getInt("quality", 80).coerceIn(10, 100))
+    }
+    var maxSide by remember {
+        mutableStateOf<Int?>(
+            prefs.getInt("max_side", 720).let { if (it < 0) null else it }
+        )
+    }
+    var lossless by remember {
+        mutableStateOf(prefs.getBoolean("lossless", false))
+    }
+    var loopForever by remember {
+        mutableStateOf(prefs.getBoolean("loop_forever", true))
+    }
+    var speed by remember {
+        mutableStateOf(
+            runCatching {
+                ConversionSpeed.valueOf(
+                    prefs.getString("speed", ConversionSpeed.FAST.name)
+                        ?: ConversionSpeed.FAST.name
+                )
+            }.getOrDefault(ConversionSpeed.FAST)
+        )
+    }
 
-    var splitMode by remember { mutableStateOf(SplitMode.NONE) }
-    var splitCount by remember { mutableIntStateOf(2) }
-    var targetPartSizeMb by remember { mutableIntStateOf(8) }
+    var splitMode by remember {
+        mutableStateOf(
+            runCatching {
+                SplitMode.valueOf(
+                    prefs.getString("split_mode", SplitMode.NONE.name)
+                        ?: SplitMode.NONE.name
+                )
+            }.getOrDefault(SplitMode.NONE)
+        )
+    }
+    var splitCount by remember {
+        mutableIntStateOf(prefs.getInt("split_count", 2).coerceIn(2, 20))
+    }
+    var targetPartSizeMb by remember {
+        mutableIntStateOf(
+            prefs.getInt("target_part_mb", 8).coerceIn(1, 100)
+        )
+    }
 
     var outputTreeUri by remember {
         mutableStateOf(
@@ -225,6 +269,30 @@ fun VideoToWebPApp() {
         } ?: "Pictures / VideoToWebP"
     }
 
+    LaunchedEffect(
+        fps,
+        quality,
+        maxSide,
+        lossless,
+        loopForever,
+        speed,
+        splitMode,
+        splitCount,
+        targetPartSizeMb
+    ) {
+        prefs.edit()
+            .putInt("fps", fps)
+            .putInt("quality", quality)
+            .putInt("max_side", maxSide ?: -1)
+            .putBoolean("lossless", lossless)
+            .putBoolean("loop_forever", loopForever)
+            .putString("speed", speed.name)
+            .putString("split_mode", splitMode.name)
+            .putInt("split_count", splitCount)
+            .putInt("target_part_mb", targetPartSizeMb)
+            .apply()
+    }
+
     LaunchedEffect(videoUri) {
         val uri = videoUri
         if (uri == null) {
@@ -282,6 +350,27 @@ fun VideoToWebPApp() {
         onDispose {
             engine.cancel()
             exoPlayer.release()
+        }
+    }
+
+    DisposableEffect(converting) {
+        val activity = context as? android.app.Activity
+        if (converting) {
+            activity?.window?.addFlags(
+                android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+            )
+        } else {
+            activity?.window?.clearFlags(
+                android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+            )
+        }
+
+        onDispose {
+            if (converting) {
+                activity?.window?.clearFlags(
+                    android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                )
+            }
         }
     }
 
@@ -404,6 +493,24 @@ fun VideoToWebPApp() {
                         exoPlayer.pause()
                         seekPlayer(currentPositionMs + delta)
                     },
+                    onSetIn = {
+                        videoInfo?.let {
+                            val maxIn = (endSec - 0.1f).coerceAtLeast(0f)
+                            startSec = (currentPositionMs / 1000f)
+                                .coerceIn(0f, maxIn)
+                            exoPlayer.pause()
+                        }
+                    },
+                    onSetOut = {
+                        videoInfo?.let { currentInfo ->
+                            val maxOut = currentInfo.durationMs / 1000f
+                            val minOut = (startSec + 0.1f)
+                                .coerceAtMost(maxOut)
+                            endSec = (currentPositionMs / 1000f)
+                                .coerceIn(minOut, maxOut)
+                            exoPlayer.pause()
+                        }
+                    },
                     onTrimChange = { newStart, newEnd, seekSec ->
                         startSec = newStart
                         endSec = newEnd
@@ -433,7 +540,14 @@ fun VideoToWebPApp() {
                     onMaxSideChange = { maxSide = it },
                     onLosslessChange = { lossless = it },
                     onLoopChange = { loopForever = it },
-                    onSpeedChange = { speed = it }
+                    onSpeedChange = { speed = it },
+                    onApplyPreset = { preset ->
+                        maxSide = preset.maxSide
+                        fps = preset.fps
+                        quality = preset.quality
+                        lossless = false
+                        speed = preset.speed
+                    }
                 )
 
                 StorageCard(
@@ -474,7 +588,17 @@ fun VideoToWebPApp() {
                     result = converted,
                     selectedIndex = selectedResultPart,
                     onSelectPart = { selectedResultPart = it },
-                    onShare = {
+                    onOpenSelected = {
+                        converted.parts
+                            .getOrNull(selectedResultPart)
+                            ?.let { openResult(context, it.uri) }
+                    },
+                    onShareSelected = {
+                        converted.parts
+                            .getOrNull(selectedResultPart)
+                            ?.let { shareSingleResult(context, it.uri) }
+                    },
+                    onShareAll = {
                         shareResult(context, converted)
                     }
                 )
@@ -579,6 +703,8 @@ private fun PlayerSection(
     onPickAnother: () -> Unit,
     onTogglePlay: () -> Unit,
     onSeekBy: (Long) -> Unit,
+    onSetIn: () -> Unit,
+    onSetOut: () -> Unit,
     onTrimChange: (Float, Float, Float) -> Unit
 ) {
     val durationSec = ((info?.durationMs ?: 100L) / 1000f).coerceAtLeast(0.1f)
@@ -733,6 +859,26 @@ private fun PlayerSection(
                     TimePill("OUT", (endSec * 1000).toLong())
                 }
 
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    FilledTonalButton(
+                        onClick = onSetIn,
+                        enabled = !converting && info != null,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("현재 위치 → IN")
+                    }
+                    FilledTonalButton(
+                        onClick = onSetOut,
+                        enabled = !converting && info != null,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("현재 위치 → OUT")
+                    }
+                }
+
                 OutlinedButton(
                     onClick = onPickAnother,
                     enabled = !converting,
@@ -779,12 +925,56 @@ private fun OutputSettingsCard(
     onMaxSideChange: (Int?) -> Unit,
     onLosslessChange: (Boolean) -> Unit,
     onLoopChange: (Boolean) -> Unit,
-    onSpeedChange: (ConversionSpeed) -> Unit
+    onSpeedChange: (ConversionSpeed) -> Unit,
+    onApplyPreset: (QuickPreset) -> Unit
 ) {
     SectionCard(
         title = "출력 설정",
         subtitle = "화질과 속도를 원하는 용도에 맞게 조절"
     ) {
+        Text("빠른 프리셋", fontWeight = FontWeight.SemiBold)
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(
+                listOf(
+                    QuickPreset(
+                        "초고속",
+                        480,
+                        12,
+                        72,
+                        ConversionSpeed.TURBO
+                    ),
+                    QuickPreset(
+                        "추천",
+                        720,
+                        15,
+                        80,
+                        ConversionSpeed.FAST
+                    ),
+                    QuickPreset(
+                        "고화질",
+                        1080,
+                        20,
+                        88,
+                        ConversionSpeed.BALANCED
+                    )
+                )
+            ) { preset ->
+                FilterChip(
+                    selected =
+                        maxSide == preset.maxSide &&
+                            fps == preset.fps &&
+                            quality == preset.quality &&
+                            speed == preset.speed &&
+                            !lossless,
+                    onClick = { onApplyPreset(preset) },
+                    enabled = enabled,
+                    label = { Text(preset.label) }
+                )
+            }
+        }
+
         Text("해상도", fontWeight = FontWeight.SemiBold)
         val resolutions = listOf(
             ResolutionOption("원본", null),
@@ -832,6 +1022,7 @@ private fun OutputSettingsCard(
         ) {
             items(
                 listOf(
+                    ConversionSpeed.TURBO to "터보",
                     ConversionSpeed.FAST to "빠름",
                     ConversionSpeed.BALANCED to "균형",
                     ConversionSpeed.MAX_COMPRESSION to "최대 압축"
@@ -1064,7 +1255,9 @@ private fun ResultCard(
     result: ConversionResult,
     selectedIndex: Int,
     onSelectPart: (Int) -> Unit,
-    onShare: () -> Unit
+    onOpenSelected: () -> Unit,
+    onShareSelected: () -> Unit,
+    onShareAll: () -> Unit
 ) {
     val safeIndex = selectedIndex.coerceIn(
         0,
@@ -1133,17 +1326,31 @@ private fun ResultCard(
             }
         }
 
-        Button(
-            onClick = onShare,
-            modifier = Modifier.fillMaxWidth()
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Text(
-                if (result.parts.size > 1) {
-                    "전체 파일 공유"
-                } else {
-                    "WebP 공유"
-                }
-            )
+            OutlinedButton(
+                onClick = onOpenSelected,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("선택 파일 열기")
+            }
+            Button(
+                onClick = onShareSelected,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("선택 공유")
+            }
+        }
+
+        if (result.parts.size > 1) {
+            FilledTonalButton(
+                onClick = onShareAll,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("전체 파일 공유")
+            }
         }
     }
 }
@@ -1291,20 +1498,42 @@ private fun AnimatedWebPPreview(uri: Uri) {
     }
 }
 
+private fun openResult(
+    context: android.content.Context,
+    uri: Uri
+) {
+    val view = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, "image/webp")
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    runCatching {
+        context.startActivity(
+            Intent.createChooser(view, "WebP 열기")
+        )
+    }
+}
+
+private fun shareSingleResult(
+    context: android.content.Context,
+    uri: Uri
+) {
+    val send = Intent(Intent.ACTION_SEND).apply {
+        type = "image/webp"
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(
+        Intent.createChooser(send, "WebP 공유")
+    )
+}
+
 private fun shareResult(
     context: android.content.Context,
     result: ConversionResult
 ) {
     if (result.parts.size <= 1) {
         val uri = result.parts.firstOrNull()?.uri ?: return
-        val send = Intent(Intent.ACTION_SEND).apply {
-            type = "image/webp"
-            putExtra(Intent.EXTRA_STREAM, uri)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        context.startActivity(
-            Intent.createChooser(send, "WebP 공유")
-        )
+        shareSingleResult(context, uri)
         return
     }
 
