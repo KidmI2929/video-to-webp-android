@@ -12,8 +12,8 @@ android {
         applicationId = "com.kidmi.videotowebp"
         minSdk = 29
         targetSdk = 35
-        versionCode = 11
-        versionName = "0.9.0"
+        versionCode = 12
+        versionName = "1.0.0"
 
         ndk {
             abiFilters += "arm64-v8a"
@@ -45,6 +45,7 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.11.1")
     implementation("androidx.documentfile:documentfile:1.1.0")
     implementation("com.google.mlkit:face-detection:16.1.7")
+    implementation("com.google.mlkit:pose-detection:18.0.0-beta5")
 
     // Built by GitHub Actions with --enable-libwebp, ARM64 NEON and speed optimization.
     implementation(files("libs/ffmpeg-kit-custom.aar"))
