@@ -58,7 +58,8 @@ data class ConversionSettings(
     val targetPartSizeMb: Int = 8,
     val cropAspect: CropAspect = CropAspect.ORIGINAL,
     val focusX: Float = 0.5f,
-    val focusY: Float = 0.5f
+    val focusY: Float = 0.5f,
+    val focusTrack: List<FocusKeyframe> = emptyList()
 )
 
 data class ConversionPartResult(
@@ -748,17 +749,27 @@ class ConversionEngine(private val context: Context) {
         }
 
         val filters = buildList {
+            // Normalize filter timestamps so dynamic face tracking uses t=0
+            // at the beginning of every encoded segment.
+            add("setpts=PTS-STARTPTS")
+
             settings.cropAspect.ratio?.let { targetRatio ->
                 val ratioText = String.format(Locale.US, "%.8f", targetRatio)
-                val focusX = String.format(
-                    Locale.US,
-                    "%.6f",
-                    settings.focusX.coerceIn(0f, 1f)
+
+                val focusXExpr = buildFocusExpression(
+                    points = settings.focusTrack,
+                    segmentStartMs = segmentStartMs,
+                    segmentDurationMs = segmentDurationMs,
+                    fallback = settings.focusX,
+                    axis = { it.x }
                 )
-                val focusY = String.format(
-                    Locale.US,
-                    "%.6f",
-                    settings.focusY.coerceIn(0f, 1f)
+
+                val focusYExpr = buildFocusExpression(
+                    points = settings.focusTrack,
+                    segmentStartMs = segmentStartMs,
+                    segmentDurationMs = segmentDurationMs,
+                    fallback = settings.focusY,
+                    axis = { it.y }
                 )
 
                 val cropWidth =
@@ -766,12 +777,12 @@ class ConversionEngine(private val context: Context) {
                 val cropHeight =
                     "if(gt(iw/ih,$ratioText),ih,trunc(iw/$ratioText/2)*2)"
                 val cropX =
-                    "max(0,min(iw-ow,iw*$focusX-ow/2))"
+                    "max(0,min(iw-ow,iw*($focusXExpr)-ow/2))"
                 val cropY =
-                    "max(0,min(ih-oh,ih*$focusY-oh/2))"
+                    "max(0,min(ih-oh,ih*($focusYExpr)-oh/2))"
 
                 add(
-                    "crop=$cropWidth:$cropHeight:$cropX:$cropY"
+                    "crop=w='$cropWidth':h='$cropHeight':x='$cropX':y='$cropY'"
                 )
             }
 
@@ -817,6 +828,105 @@ class ConversionEngine(private val context: Context) {
         }
         base += output
         return base
+    }
+
+    private fun buildFocusExpression(
+        points: List<FocusKeyframe>,
+        segmentStartMs: Long,
+        segmentDurationMs: Long,
+        fallback: Float,
+        axis: (FocusKeyframe) -> Float
+    ): String {
+        val fallbackText = String.format(
+            Locale.US,
+            "%.6f",
+            fallback.coerceIn(0f, 1f)
+        )
+
+        if (points.size < 2) {
+            return fallbackText
+        }
+
+        val segmentEndMs = segmentStartMs + segmentDurationMs
+        val sorted = points.sortedBy { it.timeMs }
+
+        val selected = buildList {
+            sorted.lastOrNull {
+                it.timeMs <= segmentStartMs
+            }?.let { add(it) }
+
+            sorted.filterTo(this) {
+                it.timeMs > segmentStartMs &&
+                    it.timeMs < segmentEndMs
+            }
+
+            sorted.firstOrNull {
+                it.timeMs >= segmentEndMs
+            }?.let { add(it) }
+        }
+            .distinctBy { it.timeMs }
+            .ifEmpty { sorted.take(1) }
+
+        if (selected.size == 1) {
+            return String.format(
+                Locale.US,
+                "%.6f",
+                axis(selected.first()).coerceIn(0f, 1f)
+            )
+        }
+
+        var expression = String.format(
+            Locale.US,
+            "%.6f",
+            axis(selected.last()).coerceIn(0f, 1f)
+        )
+
+        for (index in selected.size - 2 downTo 0) {
+            val a = selected[index]
+            val b = selected[index + 1]
+
+            val t0 = (a.timeMs - segmentStartMs) / 1000.0
+            val t1 = (b.timeMs - segmentStartMs) / 1000.0
+
+            if (t1 <= t0) continue
+
+            val v0 = axis(a).coerceIn(0f, 1f)
+            val v1 = axis(b).coerceIn(0f, 1f)
+
+            val t0Text = String.format(
+                Locale.US,
+                "%.6f",
+                t0
+            )
+            val t1Text = String.format(
+                Locale.US,
+                "%.6f",
+                t1
+            )
+            val v0Text = String.format(
+                Locale.US,
+                "%.6f",
+                v0
+            )
+            val deltaText = String.format(
+                Locale.US,
+                "%.6f",
+                v1 - v0
+            )
+            val durationText = String.format(
+                Locale.US,
+                "%.6f",
+                t1 - t0
+            )
+
+            val interpolated =
+                "$v0Text+($deltaText)*(t-($t0Text))/($durationText)"
+
+            expression =
+                "if(lt(t,$t1Text),$interpolated,$expression)"
+        }
+
+        return expression
     }
 
     private fun complete(
