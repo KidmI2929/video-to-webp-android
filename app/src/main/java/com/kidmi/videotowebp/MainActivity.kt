@@ -185,7 +185,7 @@ private data class QuickPreset(
 )
 
 @Composable
-fun VideoToWebPApp(
+private fun VideoToWebPApp(
     themeMode: ThemeMode,
     onThemeModeChange: (ThemeMode) -> Unit
 ) {
@@ -865,6 +865,8 @@ private fun PlayerSection(
         .roundToInt()
         .coerceAtLeast(1)
         .toLong()
+    val focusMarkerColor =
+        MaterialTheme.colorScheme.secondary
 
     val aspect = if (
         info != null &&
@@ -985,7 +987,7 @@ private fun PlayerSection(
                         )
 
                         drawCircle(
-                            color = MaterialTheme.colorScheme.secondary,
+                            color = focusMarkerColor,
                             radius = 7.dp.toPx(),
                             center = androidx.compose.ui.geometry.Offset(
                                 centerX,
@@ -1229,7 +1231,7 @@ private fun OutputSettingsCard(
 ) {
     SectionCard(
         title = "출력 설정",
-        subtitle = "화질과 속도를 원하는 용도에 맞게 조절"
+        subtitle = "화질·속도 설정은 변경 즉시 현재 프리셋에 자동 저장"
     ) {
         Text("빠른 프리셋", fontWeight = FontWeight.SemiBold)
         LazyRow(
@@ -1350,6 +1352,121 @@ private fun OutputSettingsCard(
             checked = loopForever,
             enabled = enabled,
             onCheckedChange = onLoopChange
+        )
+    }
+}
+
+@Composable
+private fun FramingCard(
+    cropAspect: CropAspect,
+    focusX: Float,
+    focusY: Float,
+    enabled: Boolean,
+    onCropAspectChange: (CropAspect) -> Unit,
+    onFocusChange: (Float, Float) -> Unit
+) {
+    SectionCard(
+        title = "화면비 · 크롭 · 포커스",
+        subtitle = "원하는 화면비로 자르고 선택한 지점을 화면 중심에 맞춤"
+    ) {
+        Text(
+            "출력 화면비",
+            fontWeight = FontWeight.SemiBold
+        )
+
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(
+                listOf(
+                    CropAspect.ORIGINAL to "원본",
+                    CropAspect.SQUARE to "1:1",
+                    CropAspect.PORTRAIT_4_5 to "4:5",
+                    CropAspect.PORTRAIT_9_16 to "9:16",
+                    CropAspect.PORTRAIT_3_4 to "3:4",
+                    CropAspect.LANDSCAPE_16_9 to "16:9"
+                )
+            ) { option ->
+                FilterChip(
+                    selected = cropAspect == option.first,
+                    onClick = {
+                        onCropAspectChange(option.first)
+                    },
+                    enabled = enabled,
+                    label = { Text(option.second) }
+                )
+            }
+        }
+
+        if (cropAspect == CropAspect.ORIGINAL) {
+            Text(
+                "원본 화면비에서는 크롭하지 않습니다. 화면비를 선택하면 포커스 기능이 활성화됩니다.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        } else {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    Text(
+                        "포커스 X " +
+                            (focusX * 100).roundToInt() +
+                            "% · Y " +
+                            (focusY * 100).roundToInt() +
+                            "%",
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        "영상 화면을 직접 탭하면 그 지점이 크롭 중심이 됩니다.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Text(
+                "빠른 포커스",
+                fontWeight = FontWeight.SemiBold
+            )
+
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(
+                    listOf(
+                        Triple("중앙", 0.5f, 0.5f),
+                        Triple("얼굴", 0.5f, 0.28f),
+                        Triple("상체", 0.5f, 0.40f),
+                        Triple("전신", 0.5f, 0.55f)
+                    )
+                ) { preset ->
+                    FilterChip(
+                        selected =
+                            kotlin.math.abs(focusX - preset.second) < 0.02f &&
+                                kotlin.math.abs(focusY - preset.third) < 0.02f,
+                        onClick = {
+                            onFocusChange(
+                                preset.second,
+                                preset.third
+                            )
+                        },
+                        enabled = enabled,
+                        label = { Text(preset.first) }
+                    )
+                }
+            }
+        }
+
+        Text(
+            "화면비와 포커스도 현재 프리셋에 자동 저장됩니다.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.primary
         )
     }
 }
