@@ -191,6 +191,9 @@ private fun VideoToWebPApp(
 ) {
     val context = LocalContext.current
     val engine = remember { ConversionEngine(context.applicationContext) }
+    val faceTracker = remember {
+        FaceTrackingAnalyzer(context.applicationContext)
+    }
     val prefs = remember {
         context.getSharedPreferences("video_to_webp", android.content.Context.MODE_PRIVATE)
     }
@@ -281,6 +284,12 @@ private fun VideoToWebPApp(
         )
     }
 
+    var autoFaceTrack by remember {
+        mutableStateOf(
+            prefs.getBoolean("auto_face_track", false)
+        )
+    }
+
     var outputTreeUri by remember {
         mutableStateOf(
             prefs.getString("output_tree_uri", null)?.let(Uri::parse)
@@ -306,6 +315,7 @@ private fun VideoToWebPApp(
             } catch (_: Throwable) {
             }
 
+            faceTracker.cancel()
             engine.cancel()
             exoPlayer.pause()
             converting = false
@@ -360,7 +370,8 @@ private fun VideoToWebPApp(
         targetPartSizeMb,
         cropAspect,
         focusX,
-        focusY
+        focusY,
+        autoFaceTrack
     ) {
         prefs.edit()
             .putInt("fps", fps)
@@ -375,6 +386,7 @@ private fun VideoToWebPApp(
             .putString("crop_aspect", cropAspect.name)
             .putFloat("focus_x", focusX)
             .putFloat("focus_y", focusY)
+            .putBoolean("auto_face_track", autoFaceTrack)
             .apply()
     }
 
@@ -433,6 +445,7 @@ private fun VideoToWebPApp(
 
     DisposableEffect(exoPlayer) {
         onDispose {
+            faceTracker.cancel()
             engine.cancel()
             exoPlayer.release()
         }
@@ -479,51 +492,119 @@ private fun VideoToWebPApp(
             0f,
             (safeEnd - 0.1f).coerceAtLeast(0f)
         )
+        val startMs =
+            (safeStart * 1000).roundToInt().toLong()
+        val endMs =
+            (safeEnd * 1000).roundToInt().toLong()
+        val shouldTrackFace =
+            autoFaceTrack &&
+                cropAspect != CropAspect.ORIGINAL
 
         exoPlayer.pause()
+        faceTracker.cancel()
+        engine.cancel()
         converting = true
         result = null
         selectedResultPart = 0
         error = null
         progress = 0f
 
-        engine.convert(
+        fun runConversion(
+            tracking: List<FocusKeyframe>
+        ) {
+            val analysisWeight =
+                if (shouldTrackFace) 0.22f else 0f
+
+            engine.convert(
+                sourceUri = uri,
+                settings = ConversionSettings(
+                    startMs = startMs,
+                    endMs = endMs,
+                    fps = fps,
+                    quality = quality,
+                    maxSide = maxSide,
+                    lossless = lossless,
+                    loopForever = loopForever,
+                    speed = speed,
+                    outputTreeUri = outputTreeUri,
+                    splitMode = splitMode,
+                    splitCount = splitCount,
+                    targetPartSizeMb = targetPartSizeMb,
+                    cropAspect = cropAspect,
+                    focusX = focusX,
+                    focusY = focusY,
+                    focusTrack = tracking
+                ),
+                onStatus = { status = it },
+                onProgress = {
+                    progress = (
+                        analysisWeight +
+                            it.coerceIn(0f, 1f) *
+                            (1f - analysisWeight)
+                        ).coerceIn(0f, 1f)
+                },
+                onComplete = {
+                    converting = false
+                    progress = 1f
+                    result = it
+                    selectedResultPart = 0
+                    status = if (it.parts.size == 1) {
+                        "변환 완료 · " + folderName
+                    } else {
+                        it.parts.size.toString() +
+                            "개 파일 생성 완료 · " +
+                            folderName
+                    }
+                },
+                onError = {
+                    converting = false
+                    progress = 0f
+                    error = it
+                    status = "변환 실패"
+                },
+                onCancelled = {
+                    converting = false
+                    progress = 0f
+                    status = "변환이 취소되었습니다."
+                }
+            )
+        }
+
+        if (!shouldTrackFace) {
+            runConversion(emptyList())
+            return
+        }
+
+        faceTracker.analyze(
             sourceUri = uri,
-            settings = ConversionSettings(
-                startMs = (safeStart * 1000).roundToInt().toLong(),
-                endMs = (safeEnd * 1000).roundToInt().toLong(),
-                fps = fps,
-                quality = quality,
-                maxSide = maxSide,
-                lossless = lossless,
-                loopForever = loopForever,
-                speed = speed,
-                outputTreeUri = outputTreeUri,
-                splitMode = splitMode,
-                splitCount = splitCount,
-                targetPartSizeMb = targetPartSizeMb,
-                cropAspect = cropAspect,
-                focusX = focusX,
-                focusY = focusY
-            ),
+            startMs = startMs,
+            endMs = endMs,
+            initialFocusX = focusX,
+            initialFocusY = focusY,
             onStatus = { status = it },
-            onProgress = { progress = it.coerceIn(0f, 1f) },
-            onComplete = {
-                converting = false
-                progress = 1f
-                result = it
-                selectedResultPart = 0
-                status = if (it.parts.size == 1) {
-                    "변환 완료 · " + folderName
+            onProgress = {
+                progress =
+                    (it.coerceIn(0f, 1f) * 0.22f)
+                        .coerceIn(0f, 0.22f)
+            },
+            onComplete = { points ->
+                if (points.isEmpty()) {
+                    status =
+                        "얼굴을 찾지 못해 고정 포커스로 변환합니다."
+                    runConversion(emptyList())
                 } else {
-                    it.parts.size.toString() + "개 파일 생성 완료 · " + folderName
+                    status =
+                        "얼굴 추적 " +
+                            points.size +
+                            "개 지점 분석 완료"
+                    runConversion(points)
                 }
             },
             onError = {
                 converting = false
                 progress = 0f
                 error = it
-                status = "변환 실패"
+                status = "얼굴 추적 분석 실패"
             },
             onCancelled = {
                 converting = false
@@ -653,11 +734,15 @@ private fun VideoToWebPApp(
                     cropAspect = cropAspect,
                     focusX = focusX,
                     focusY = focusY,
+                    autoFaceTrack = autoFaceTrack,
                     enabled = !converting,
                     onCropAspectChange = { cropAspect = it },
                     onFocusChange = { x, y ->
                         focusX = x.coerceIn(0f, 1f)
                         focusY = y.coerceIn(0f, 1f)
+                    },
+                    onAutoFaceTrackChange = {
+                        autoFaceTrack = it
                     }
                 )
 
@@ -688,6 +773,7 @@ private fun VideoToWebPApp(
                     status = status,
                     onConvert = { startConversion() },
                     onCancel = {
+                        faceTracker.cancel()
                         engine.cancel()
                         status = "취소 요청 중…"
                     }
@@ -1358,9 +1444,11 @@ private fun FramingCard(
     cropAspect: CropAspect,
     focusX: Float,
     focusY: Float,
+    autoFaceTrack: Boolean,
     enabled: Boolean,
     onCropAspectChange: (CropAspect) -> Unit,
-    onFocusChange: (Float, Float) -> Unit
+    onFocusChange: (Float, Float) -> Unit,
+    onAutoFaceTrackChange: (Boolean) -> Unit
 ) {
     SectionCard(
         title = "화면비 · 크롭 · 포커스",
@@ -1391,6 +1479,41 @@ private fun FramingCard(
                     },
                     enabled = enabled,
                     label = { Text(option.second) }
+                )
+            }
+        }
+
+        SettingSwitch(
+            title = "얼굴 자동 추적 크롭",
+            description = if (cropAspect == CropAspect.ORIGINAL) {
+                "화면비를 먼저 선택하면 얼굴 추적 크롭을 사용할 수 있습니다."
+            } else if (autoFaceTrack) {
+                "변환 전 얼굴을 분석하고 같은 얼굴을 따라 크롭 중심을 움직입니다."
+            } else {
+                "끄면 아래의 고정 포커스 위치를 계속 사용합니다."
+            },
+            checked = autoFaceTrack,
+            enabled =
+                enabled &&
+                    cropAspect != CropAspect.ORIGINAL,
+            onCheckedChange = onAutoFaceTrackChange
+        )
+
+        if (
+            cropAspect != CropAspect.ORIGINAL &&
+            autoFaceTrack
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.primaryContainer
+            ) {
+                Text(
+                    "여러 얼굴이 있으면 플레이어에서 추적할 얼굴 근처를 먼저 탭하세요. " +
+                        "첫 분석 지점에서 가장 가까운 얼굴을 우선 선택하고, 이후 tracking ID와 위치로 이어서 추적합니다.",
+                    modifier = Modifier.padding(14.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
                 )
             }
         }
@@ -1461,7 +1584,7 @@ private fun FramingCard(
         }
 
         Text(
-            "화면비와 포커스도 현재 프리셋에 자동 저장됩니다.",
+            "화면비·고정 포커스·얼굴 자동 추적 설정도 현재 프리셋에 자동 저장됩니다.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.primary
         )
