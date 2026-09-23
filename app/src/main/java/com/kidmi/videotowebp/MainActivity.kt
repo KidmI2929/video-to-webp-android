@@ -1145,7 +1145,7 @@ private fun SettingsSummaryBar(
     ) {
         items(
             listOf(
-                (maxSide?.toString() ?: "원본") + "p",
+                maxSide?.let { it.toString() + "p" } ?: "원본",
                 fps.toString() + "fps",
                 "Q" + quality,
                 aspectLabel,
