@@ -22,6 +22,7 @@ import kotlin.math.max
 import kotlin.math.min
 
 enum class ConversionSpeed {
+    TURBO,
     FAST,
     BALANCED,
     MAX_COMPRESSION
@@ -721,12 +722,14 @@ class ConversionEngine(private val context: Context) {
         val loop = if (settings.loopForever) 0 else 1
 
         val compression = when (settings.speed) {
+            ConversionSpeed.TURBO -> 0
             ConversionSpeed.FAST -> 1
             ConversionSpeed.BALANCED -> 4
             ConversionSpeed.MAX_COMPRESSION -> 6
         }
 
         val scaleFlags = when (settings.speed) {
+            ConversionSpeed.TURBO -> "fast_bilinear"
             ConversionSpeed.FAST -> "bilinear"
             ConversionSpeed.BALANCED -> "bicubic"
             ConversionSpeed.MAX_COMPRESSION -> "lanczos"
@@ -742,7 +745,7 @@ class ConversionEngine(private val context: Context) {
             }
         }.joinToString(",")
 
-        return listOf(
+        val base = mutableListOf(
             "-hide_banner",
             "-loglevel", "error",
             "-nostdin",
@@ -766,9 +769,14 @@ class ConversionEngine(private val context: Context) {
             "-compression_level", compression.toString(),
             "-preset", "picture",
             "-loop", loop.toString(),
-            "-threads", "0",
-            output
+            "-threads", "0"
         )
+
+        if (!settings.lossless) {
+            base += listOf("-pix_fmt", "yuv420p")
+        }
+        base += output
+        return base
     }
 
     private fun complete(
@@ -804,6 +812,7 @@ class ConversionEngine(private val context: Context) {
 
     private fun speedLabel(speed: ConversionSpeed): String {
         return when (speed) {
+            ConversionSpeed.TURBO -> "터보 모드"
             ConversionSpeed.FAST -> "빠른 모드"
             ConversionSpeed.BALANCED -> "균형 모드"
             ConversionSpeed.MAX_COMPRESSION -> "최대 압축 모드"
