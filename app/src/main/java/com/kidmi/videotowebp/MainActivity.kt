@@ -89,6 +89,7 @@ fun VideoToWebPApp() {
     var maxSide by remember { mutableStateOf<Int?>(720) }
     var lossless by remember { mutableStateOf(false) }
     var loopForever by remember { mutableStateOf(true) }
+    var speed by remember { mutableStateOf(ConversionSpeed.BALANCED) }
 
     var converting by remember { mutableStateOf(false) }
     var progress by remember { mutableFloatStateOf(0f) }
@@ -160,7 +161,8 @@ fun VideoToWebPApp() {
                 quality = quality,
                 maxSide = maxSide,
                 lossless = lossless,
-                loopForever = loopForever
+                loopForever = loopForever,
+                speed = speed
             ),
             onStatus = { status = it },
             onProgress = { progress = it.coerceIn(0f, 1f) },
@@ -319,6 +321,32 @@ fun VideoToWebPApp() {
                     checked = loopForever,
                     enabled = !converting,
                     onCheckedChange = { loopForever = it }
+                )
+
+                Text("변환 속도", style = MaterialTheme.typography.titleMedium)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(
+                        listOf(
+                            ConversionSpeed.FAST to "빠름",
+                            ConversionSpeed.BALANCED to "균형",
+                            ConversionSpeed.MAX_COMPRESSION to "최대 압축"
+                        )
+                    ) { option ->
+                        FilterChip(
+                            selected = speed == option.first,
+                            onClick = { speed = option.first },
+                            enabled = !converting,
+                            label = { Text(option.second) }
+                        )
+                    }
+                }
+                Text(
+                    when (speed) {
+                        ConversionSpeed.FAST -> "속도를 우선합니다. 파일은 조금 커질 수 있습니다."
+                        ConversionSpeed.BALANCED -> "속도와 파일 크기의 균형을 맞춥니다."
+                        ConversionSpeed.MAX_COMPRESSION -> "파일 크기를 줄이는 대신 변환이 느려집니다."
+                    },
+                    style = MaterialTheme.typography.bodySmall
                 )
 
                 if (endSec - startSec > 30f) {
