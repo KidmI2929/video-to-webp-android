@@ -11,7 +11,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -63,6 +65,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -93,6 +97,12 @@ private val DarkColors = darkColorScheme(
     outline = Color(0xFF87909F)
 )
 
+private enum class ThemeMode {
+    SYSTEM,
+    LIGHT,
+    DARK
+}
+
 private val LightColors = lightColorScheme(
     primary = Color(0xFF315DA8),
     onPrimary = Color.White,
@@ -111,12 +121,53 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            MaterialTheme(
-                colorScheme = if (isSystemInDarkTheme()) DarkColors else LightColors
-            ) {
-                VideoToWebPApp()
-            }
+            MotionWebPRoot()
         }
+    }
+}
+
+@Composable
+private fun MotionWebPRoot() {
+    val context = LocalContext.current
+    val prefs = remember {
+        context.getSharedPreferences(
+            "video_to_webp",
+            android.content.Context.MODE_PRIVATE
+        )
+    }
+
+    var themeMode by remember {
+        mutableStateOf(
+            runCatching {
+                ThemeMode.valueOf(
+                    prefs.getString(
+                        "theme_mode",
+                        ThemeMode.SYSTEM.name
+                    ) ?: ThemeMode.SYSTEM.name
+                )
+            }.getOrDefault(ThemeMode.SYSTEM)
+        )
+    }
+
+    val useDark = when (themeMode) {
+        ThemeMode.SYSTEM -> isSystemInDarkTheme()
+        ThemeMode.LIGHT -> false
+        ThemeMode.DARK -> true
+    }
+
+    LaunchedEffect(themeMode) {
+        prefs.edit()
+            .putString("theme_mode", themeMode.name)
+            .apply()
+    }
+
+    MaterialTheme(
+        colorScheme = if (useDark) DarkColors else LightColors
+    ) {
+        VideoToWebPApp(
+            themeMode = themeMode,
+            onThemeModeChange = { themeMode = it }
+        )
     }
 }
 
@@ -134,7 +185,10 @@ private data class QuickPreset(
 )
 
 @Composable
-fun VideoToWebPApp() {
+fun VideoToWebPApp(
+    themeMode: ThemeMode,
+    onThemeModeChange: (ThemeMode) -> Unit
+) {
     val context = LocalContext.current
     val engine = remember { ConversionEngine(context.applicationContext) }
     val prefs = remember {
