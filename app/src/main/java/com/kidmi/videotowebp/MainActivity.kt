@@ -734,9 +734,12 @@ fun VideoToWebPApp(
 }
 
 @Composable
-private fun Header() {
+private fun Header(
+    themeMode: ThemeMode,
+    onThemeModeChange: (ThemeMode) -> Unit
+) {
     Column(
-        verticalArrangement = Arrangement.spacedBy(4.dp)
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically
@@ -763,11 +766,30 @@ private fun Header() {
                 )
             }
         }
+
         Text(
-            "영상 구간을 확인하면서 빠르게 Animated WebP로 변환",
+            "영상 구간을 프레임 단위로 확인하고 원하는 화면비로 변환",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(
+                listOf(
+                    ThemeMode.SYSTEM to "시스템",
+                    ThemeMode.LIGHT to "라이트",
+                    ThemeMode.DARK to "다크"
+                )
+            ) { option ->
+                FilterChip(
+                    selected = themeMode == option.first,
+                    onClick = { onThemeModeChange(option.first) },
+                    label = { Text(option.second) }
+                )
+            }
+        }
     }
 }
 
@@ -810,13 +832,18 @@ private fun PlayerSection(
     isPlaying: Boolean,
     startSec: Float,
     endSec: Float,
+    outputFps: Int,
+    cropAspect: CropAspect,
+    focusX: Float,
+    focusY: Float,
     converting: Boolean,
     onPickAnother: () -> Unit,
     onTogglePlay: () -> Unit,
     onSeekBy: (Long) -> Unit,
     onSetIn: () -> Unit,
     onSetOut: () -> Unit,
-    onTrimChange: (Float, Float, Float) -> Unit
+    onTrimChange: (Float, Float, Float) -> Unit,
+    onFocusChange: (Float, Float) -> Unit
 ) {
     val durationSec = ((info?.durationMs ?: 100L) / 1000f).coerceAtLeast(0.1f)
     val startMs = (startSec * 1000f).toLong()
@@ -827,6 +854,17 @@ private fun PlayerSection(
     val selectedProgress = (
         withinSelection.toDouble() / selectedDuration.toDouble()
     ).toFloat()
+
+    val sourceFps = info?.sourceFps?.takeIf { it > 0.1f }
+        ?: outputFps.toFloat().coerceAtLeast(1f)
+    val currentFrame = frameIndexAt(
+        currentPositionMs,
+        sourceFps
+    )
+    val frameStepMs = (1000f / sourceFps)
+        .roundToInt()
+        .coerceAtLeast(1)
+        .toLong()
 
     val aspect = if (
         info != null &&
@@ -863,6 +901,99 @@ private fun PlayerSection(
                     },
                     modifier = Modifier.fillMaxSize()
                 )
+
+                Canvas(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(
+                            cropAspect,
+                            converting
+                        ) {
+                            if (!converting &&
+                                cropAspect != CropAspect.ORIGINAL
+                            ) {
+                                detectTapGestures { offset ->
+                                    val width = size.width
+                                        .toFloat()
+                                        .coerceAtLeast(1f)
+                                    val height = size.height
+                                        .toFloat()
+                                        .coerceAtLeast(1f)
+
+                                    onFocusChange(
+                                        (offset.x / width)
+                                            .coerceIn(0f, 1f),
+                                        (offset.y / height)
+                                            .coerceIn(0f, 1f)
+                                    )
+                                }
+                            }
+                        }
+                ) {
+                    cropAspect.ratio?.let { targetRatio ->
+                        val canvasRatio =
+                            size.width / size.height
+
+                        val cropWidth: Float
+                        val cropHeight: Float
+
+                        if (canvasRatio > targetRatio) {
+                            cropHeight = size.height
+                            cropWidth =
+                                (cropHeight * targetRatio)
+                                    .toFloat()
+                        } else {
+                            cropWidth = size.width
+                            cropHeight =
+                                (cropWidth / targetRatio)
+                                    .toFloat()
+                        }
+
+                        val centerX =
+                            focusX.coerceIn(0f, 1f) *
+                                size.width
+                        val centerY =
+                            focusY.coerceIn(0f, 1f) *
+                                size.height
+
+                        val left = (
+                            centerX - cropWidth / 2f
+                            ).coerceIn(
+                            0f,
+                            (size.width - cropWidth)
+                                .coerceAtLeast(0f)
+                        )
+                        val top = (
+                            centerY - cropHeight / 2f
+                            ).coerceIn(
+                            0f,
+                            (size.height - cropHeight)
+                                .coerceAtLeast(0f)
+                        )
+
+                        drawRect(
+                            color = Color.White,
+                            topLeft = androidx.compose.ui.geometry.Offset(
+                                left,
+                                top
+                            ),
+                            size = androidx.compose.ui.geometry.Size(
+                                cropWidth,
+                                cropHeight
+                            ),
+                            style = Stroke(width = 3.dp.toPx())
+                        )
+
+                        drawCircle(
+                            color = MaterialTheme.colorScheme.secondary,
+                            radius = 7.dp.toPx(),
+                            center = androidx.compose.ui.geometry.Offset(
+                                centerX,
+                                centerY
+                            )
+                        )
+                    }
+                }
             }
 
             Column(
@@ -878,8 +1009,21 @@ private fun PlayerSection(
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        info.width.toString() + "×" + info.height +
-                            " · " + formatDuration(info.durationMs),
+                        buildString {
+                            append(info.width)
+                            append("×")
+                            append(info.height)
+                            append(" · ")
+                            append(formatDuration(info.durationMs))
+                            info.sourceFps?.let {
+                                append(" · ")
+                                append(String.format(
+                                    java.util.Locale.US,
+                                    "%.2f fps",
+                                    it
+                                ))
+                            }
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -890,36 +1034,80 @@ private fun PlayerSection(
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        formatDuration(currentPositionMs),
-                        style = MaterialTheme.typography.labelLarge
+                        buildString {
+                            append(formatDetailedTime(currentPositionMs))
+                            currentFrame?.let {
+                                append(" · Frame ")
+                                append(it)
+                            }
+                            append(" · ")
+                            append(
+                                String.format(
+                                    java.util.Locale.US,
+                                    "%.2f fps",
+                                    sourceFps
+                                )
+                            )
+                        },
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary
                     )
+
                     Row(
+                        modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         FilledTonalButton(
-                            onClick = { onSeekBy(-1000L) },
-                            enabled = !converting
+                            onClick = { onSeekBy(-frameStepMs) },
+                            enabled = !converting,
+                            modifier = Modifier.weight(1f)
                         ) {
-                            Text("−1s")
+                            Text("−1F")
                         }
                         Button(
                             onClick = onTogglePlay,
-                            enabled = !converting
+                            enabled = !converting,
+                            modifier = Modifier.weight(1.35f)
                         ) {
-                            Text(if (isPlaying) "일시정지" else "재생")
+                            Text(
+                                if (isPlaying) {
+                                    "일시정지"
+                                } else {
+                                    "재생"
+                                }
+                            )
                         }
                         FilledTonalButton(
-                            onClick = { onSeekBy(1000L) },
-                            enabled = !converting
+                            onClick = { onSeekBy(frameStepMs) },
+                            enabled = !converting,
+                            modifier = Modifier.weight(1f)
                         ) {
-                            Text("+1s")
+                            Text("+1F")
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { onSeekBy(-1000L) },
+                            enabled = !converting,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("−1초")
+                        }
+                        OutlinedButton(
+                            onClick = { onSeekBy(1000L) },
+                            enabled = !converting,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("+1초")
                         }
                     }
                 }
@@ -1012,7 +1200,7 @@ private fun TimePill(
         shape = RoundedCornerShape(12.dp)
     ) {
         Text(
-            label + "  " + formatDuration(timeMs),
+            label + "  " + formatDetailedTime(timeMs),
             modifier = Modifier.padding(
                 horizontal = 11.dp,
                 vertical = 7.dp
