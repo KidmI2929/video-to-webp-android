@@ -1995,6 +1995,8 @@ private fun CompactFocusPreview(
     focusX: Float,
     focusY: Float,
     cropZoom: Float,
+    trackingPath: List<FocusKeyframe>,
+    manualKeyframes: List<FocusKeyframe>,
     converting: Boolean,
     onFocusChange: (Float, Float) -> Unit
 ) {
@@ -2271,6 +2273,7 @@ private fun PlayerSection(
     cropAspect: CropAspect,
     focusX: Float,
     focusY: Float,
+    cropZoom: Float,
     converting: Boolean,
     onPickAnother: () -> Unit,
     onTogglePlay: () -> Unit,
