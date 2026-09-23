@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.MediaStore
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.FFmpegKitConfig
@@ -36,7 +37,8 @@ data class ConversionSettings(
 data class ConversionResult(
     val uri: Uri,
     val fileName: String,
-    val sizeBytes: Long
+    val sizeBytes: Long,
+    val elapsedMs: Long
 )
 
 class ConversionEngine(private val context: Context) {
@@ -153,6 +155,7 @@ class ConversionEngine(private val context: Context) {
 
         post { onStatus(speedLabel + " · 네이티브 FFmpeg 변환 중…") }
         post { onProgress(0.01f) }
+        val startedAt = SystemClock.elapsedRealtime()
 
         val session = FFmpegKit.executeWithArgumentsAsync(
             arguments.toTypedArray(),
@@ -178,7 +181,8 @@ class ConversionEngine(private val context: Context) {
                                     ConversionResult(
                                         uri = outputUri,
                                         fileName = fileName,
-                                        sizeBytes = sizeBytes
+                                        sizeBytes = sizeBytes,
+                                        elapsedMs = SystemClock.elapsedRealtime() - startedAt
                                     )
                                 )
                             }
