@@ -12,8 +12,8 @@ android {
         applicationId = "com.kidmi.videotowebp"
         minSdk = 29
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0"
 
         ndk {
             abiFilters += "arm64-v8a"
@@ -41,6 +41,9 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
-    implementation("dev.ffmpegkit-maintained:ffmpeg-kit-full:8.1.8")
+
+    // Native libwebp bindings with Animated WebP encoding support.
+    implementation("com.aureusapps.android:webp-android:1.1.2")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
