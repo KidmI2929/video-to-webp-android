@@ -339,6 +339,7 @@ class ConversionEngine(private val context: Context) {
         var partNumber = 1
         var bytesPerMsEstimate: Double? = null
         var reportedProgress = 0.01f
+        lateinit var encodeNextPart: () -> Unit
 
         fun reportProgress(value: Float) {
             if (value > reportedProgress) {
@@ -536,46 +537,56 @@ class ConversionEngine(private val context: Context) {
             )
         }
 
-        fun encodeNextPart() {
+        encodeNextPart = {
             if (cancelled.get()) {
                 cleanup()
                 post(onCancelled)
-                return
+            } else {
+                val remaining = endMs - nextStartMs
+
+                when {
+                    remaining <= 50L -> {
+                        complete(
+                            parts,
+                            startedAt,
+                            onProgress,
+                            onComplete
+                        )
+                    }
+
+                    partNumber > 100 -> {
+                        fail(
+                            "분할 파일이 100개를 초과해 작업을 중단했습니다."
+                        )
+                    }
+
+                    else -> {
+                        val estimatedDuration =
+                            bytesPerMsEstimate?.let { bytesPerMs ->
+                                (
+                                    targetBytes.toDouble() * 0.90 /
+                                        bytesPerMs.coerceAtLeast(1.0)
+                                    ).toLong()
+                            } ?: min(
+                                remaining,
+                                max(
+                                    750L,
+                                    settings.targetPartSizeMb
+                                        .coerceIn(1, 100)
+                                        .toLong() * 650L
+                                )
+                            )
+
+                        tryCandidate(
+                            durationMs = estimatedDuration.coerceIn(
+                                minChunkMs.coerceAtMost(remaining),
+                                remaining
+                            ),
+                            attempt = 0
+                        )
+                    }
+                }
             }
-
-            val remaining = endMs - nextStartMs
-            if (remaining <= 50L) {
-                complete(parts, startedAt, onProgress, onComplete)
-                return
-            }
-
-            if (partNumber > 100) {
-                fail("분할 파일이 100개를 초과해 작업을 중단했습니다.")
-                return
-            }
-
-            val estimatedDuration = bytesPerMsEstimate?.let { bytesPerMs ->
-                (
-                    targetBytes.toDouble() * 0.90 /
-                        bytesPerMs.coerceAtLeast(1.0)
-                    ).toLong()
-            } ?: min(
-                remaining,
-                max(
-                    750L,
-                    settings.targetPartSizeMb
-                        .coerceIn(1, 100)
-                        .toLong() * 650L
-                )
-            )
-
-            tryCandidate(
-                durationMs = estimatedDuration.coerceIn(
-                    minChunkMs.coerceAtMost(remaining),
-                    remaining
-                ),
-                attempt = 0
-            )
         }
 
         post { onProgress(0.01f) }
