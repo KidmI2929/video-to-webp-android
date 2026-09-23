@@ -28,7 +28,7 @@ class CoreTests(unittest.TestCase):
         self.assertIn("libwebp", args)
         self.assertIn("-progress", args)
         self.assertIn("fps=15", " ".join(args))
-        self.assertEqual(args[-2], "-f")
+        self.assertEqual(args[-3], "-f")
 
     def test_real_conversion_and_split(self):
         with tempfile.TemporaryDirectory() as temp:
