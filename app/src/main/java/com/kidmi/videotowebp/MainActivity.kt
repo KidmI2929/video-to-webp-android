@@ -256,6 +256,31 @@ fun VideoToWebPApp(
         )
     }
 
+    var cropAspect by remember {
+        mutableStateOf(
+            runCatching {
+                CropAspect.valueOf(
+                    prefs.getString(
+                        "crop_aspect",
+                        CropAspect.ORIGINAL.name
+                    ) ?: CropAspect.ORIGINAL.name
+                )
+            }.getOrDefault(CropAspect.ORIGINAL)
+        )
+    }
+
+    var focusX by remember {
+        mutableFloatStateOf(
+            prefs.getFloat("focus_x", 0.5f).coerceIn(0f, 1f)
+        )
+    }
+
+    var focusY by remember {
+        mutableFloatStateOf(
+            prefs.getFloat("focus_y", 0.5f).coerceIn(0f, 1f)
+        )
+    }
+
     var outputTreeUri by remember {
         mutableStateOf(
             prefs.getString("output_tree_uri", null)?.let(Uri::parse)
@@ -332,7 +357,10 @@ fun VideoToWebPApp(
         speed,
         splitMode,
         splitCount,
-        targetPartSizeMb
+        targetPartSizeMb,
+        cropAspect,
+        focusX,
+        focusY
     ) {
         prefs.edit()
             .putInt("fps", fps)
@@ -344,6 +372,9 @@ fun VideoToWebPApp(
             .putString("split_mode", splitMode.name)
             .putInt("split_count", splitCount)
             .putInt("target_part_mb", targetPartSizeMb)
+            .putString("crop_aspect", cropAspect.name)
+            .putFloat("focus_x", focusX)
+            .putFloat("focus_y", focusY)
             .apply()
     }
 
@@ -470,7 +501,10 @@ fun VideoToWebPApp(
                 outputTreeUri = outputTreeUri,
                 splitMode = splitMode,
                 splitCount = splitCount,
-                targetPartSizeMb = targetPartSizeMb
+                targetPartSizeMb = targetPartSizeMb,
+                cropAspect = cropAspect,
+                focusX = focusX,
+                focusY = focusY
             ),
             onStatus = { status = it },
             onProgress = { progress = it.coerceIn(0f, 1f) },
@@ -510,7 +544,10 @@ fun VideoToWebPApp(
                 .padding(horizontal = 18.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
-            Header()
+            Header(
+                themeMode = themeMode,
+                onThemeModeChange = onThemeModeChange
+            )
 
             if (videoUri == null) {
                 EmptyVideoCard(
@@ -524,6 +561,10 @@ fun VideoToWebPApp(
                     isPlaying = isPlaying,
                     startSec = startSec,
                     endSec = endSec,
+                    outputFps = fps,
+                    cropAspect = cropAspect,
+                    focusX = focusX,
+                    focusY = focusY,
                     converting = converting,
                     onPickAnother = {
                         videoPicker.launch(arrayOf("video/*"))
@@ -570,6 +611,10 @@ fun VideoToWebPApp(
                         endSec = newEnd
                         exoPlayer.pause()
                         seekPlayer((seekSec * 1000f).toLong())
+                    },
+                    onFocusChange = { x, y ->
+                        focusX = x.coerceIn(0f, 1f)
+                        focusY = y.coerceIn(0f, 1f)
                     }
                 )
             }
@@ -601,6 +646,18 @@ fun VideoToWebPApp(
                         quality = preset.quality
                         lossless = false
                         speed = preset.speed
+                    }
+                )
+
+                FramingCard(
+                    cropAspect = cropAspect,
+                    focusX = focusX,
+                    focusY = focusY,
+                    enabled = !converting,
+                    onCropAspectChange = { cropAspect = it },
+                    onFocusChange = { x, y ->
+                        focusX = x.coerceIn(0f, 1f)
+                        focusY = y.coerceIn(0f, 1f)
                     }
                 )
 
