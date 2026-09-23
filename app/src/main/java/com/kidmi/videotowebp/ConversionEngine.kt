@@ -80,17 +80,27 @@ class ConversionEngine(private val context: Context) {
 
         val input = try {
             FFmpegKitConfig.getSafParameterForRead(context, sourceUri)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             deleteDestination(outputUri)
-            post { onError(e.message ?: "선택한 영상을 열 수 없습니다.") }
+            post {
+                onError(
+                    "FFmpeg 초기화에 실패했습니다. " +
+                        (e.message ?: e.javaClass.simpleName)
+                )
+            }
             return
         }
 
         val output = try {
             FFmpegKitConfig.getSafParameterForWrite(context, outputUri)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             deleteDestination(outputUri)
-            post { onError(e.message ?: "출력 파일을 열 수 없습니다.") }
+            post {
+                onError(
+                    "출력 파일 초기화에 실패했습니다. " +
+                        (e.message ?: e.javaClass.simpleName)
+                )
+            }
             return
         }
 
@@ -157,71 +167,87 @@ class ConversionEngine(private val context: Context) {
         post { onProgress(0.01f) }
         val startedAt = SystemClock.elapsedRealtime()
 
-        val session = FFmpegKit.executeWithArgumentsAsync(
-            arguments.toTypedArray(),
-            { completed ->
-                sessionId = null
+        val session = try {
+            FFmpegKit.executeWithArgumentsAsync(
+                arguments.toTypedArray(),
+                { completed ->
+                    sessionId = null
 
-                try {
-                    when {
-                        cancelled.get() || ReturnCode.isCancel(completed.returnCode) -> {
-                            deleteDestination(outputUri)
-                            post(onCancelled)
-                        }
+                    try {
+                        when {
+                            cancelled.get() || ReturnCode.isCancel(completed.returnCode) -> {
+                                deleteDestination(outputUri)
+                                post(onCancelled)
+                            }
 
-                        ReturnCode.isSuccess(completed.returnCode) -> {
-                            finalizePending(outputUri)
-                            val fileName = queryDisplayName(context, outputUri)
-                                ?: "VideoToWebP.webp"
-                            val sizeBytes = querySize(outputUri)
+                            ReturnCode.isSuccess(completed.returnCode) -> {
+                                finalizePending(outputUri)
+                                val fileName = queryDisplayName(context, outputUri)
+                                    ?: "VideoToWebP.webp"
+                                val sizeBytes = querySize(outputUri)
 
-                            post { onProgress(1f) }
-                            post {
-                                onComplete(
-                                    ConversionResult(
-                                        uri = outputUri,
-                                        fileName = fileName,
-                                        sizeBytes = sizeBytes,
-                                        elapsedMs = SystemClock.elapsedRealtime() - startedAt
+                                post { onProgress(1f) }
+                                post {
+                                    onComplete(
+                                        ConversionResult(
+                                            uri = outputUri,
+                                            fileName = fileName,
+                                            sizeBytes = sizeBytes,
+                                            elapsedMs = SystemClock.elapsedRealtime() - startedAt
+                                        )
                                     )
-                                )
+                                }
+                            }
+
+                            else -> {
+                                deleteDestination(outputUri)
+                                val detail = completed.output
+                                    ?.lineSequence()
+                                    ?.toList()
+                                    ?.takeLast(10)
+                                    ?.joinToString("\n")
+                                    ?.take(1400)
+                                    .orEmpty()
+
+                                post {
+                                    onError(
+                                        if (detail.isBlank()) {
+                                            "WebP 변환에 실패했습니다."
+                                        } else {
+                                            "WebP 변환에 실패했습니다.\n" + detail
+                                        }
+                                    )
+                                }
                             }
                         }
-
-                        else -> {
-                            deleteDestination(outputUri)
-                            val detail = completed.output
-                                ?.lineSequence()
-                                ?.toList()
-                                ?.takeLast(10)
-                                ?.joinToString("\n")
-                                ?.take(1400)
-                                .orEmpty()
-
-                            post {
-                                onError(
-                                    if (detail.isBlank()) {
-                                        "WebP 변환에 실패했습니다."
-                                    } else {
-                                        "WebP 변환에 실패했습니다.\n" + detail
-                                    }
-                                )
-                            }
+                    } catch (e: Throwable) {
+                        deleteDestination(outputUri)
+                        post {
+                            onError(
+                                "변환 결과 처리 중 오류가 발생했습니다. " +
+                                    (e.message ?: e.javaClass.simpleName)
+                            )
                         }
                     }
-                } catch (e: Exception) {
-                    deleteDestination(outputUri)
-                    post { onError(e.message ?: "변환 결과 처리 중 오류가 발생했습니다.") }
+                },
+                { _ -> },
+                { statistics ->
+                    val processedMs = statistics.time.coerceAtLeast(0.0)
+                    val fraction = (processedMs / clipDurationMs.toDouble())
+                        .coerceIn(0.0, 1.0)
+                    post { onProgress((0.01 + fraction * 0.98).toFloat()) }
                 }
-            },
-            { _ -> },
-            { statistics ->
-                val processedMs = statistics.time.coerceAtLeast(0.0)
-                val fraction = (processedMs / clipDurationMs.toDouble())
-                    .coerceIn(0.0, 1.0)
-                post { onProgress((0.01 + fraction * 0.98).toFloat()) }
+            )
+        } catch (e: Throwable) {
+            deleteDestination(outputUri)
+            post {
+                onError(
+                    "FFmpeg 실행에 실패했습니다. " +
+                        (e.message ?: e.javaClass.simpleName)
+                )
             }
-        )
+            return
+        }
 
         sessionId = session.sessionId
     }
