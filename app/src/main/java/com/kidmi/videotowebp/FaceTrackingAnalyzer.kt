@@ -5,6 +5,8 @@ import android.graphics.Bitmap
 import android.graphics.Matrix
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.Face
@@ -26,6 +28,7 @@ class FaceTrackingAnalyzer(
     private val context: Context
 ) {
     private val cancelled = AtomicBoolean(false)
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     fun cancel() {
         cancelled.set(true)
@@ -69,8 +72,8 @@ class FaceTrackingAnalyzer(
             val retriever = MediaMetadataRetriever()
 
             try {
-                onStatus("얼굴 추적 준비 중…")
-                onProgress(0.01f)
+                post { onStatus("얼굴 추적 준비 중…") }
+                post { onProgress(0.01f) }
 
                 retriever.setDataSource(context, sourceUri)
 
@@ -144,16 +147,18 @@ class FaceTrackingAnalyzer(
 
                 sampleTimes.forEachIndexed { index, timeMs ->
                     if (cancelled.get()) {
-                        onCancelled()
+                        post(onCancelled)
                         return@Thread
                     }
 
-                    onStatus(
-                        "얼굴 추적 분석 중… " +
-                            (index + 1) +
-                            "/" +
-                            sampleTimes.size
-                    )
+                    post {
+                        onStatus(
+                            "얼굴 추적 분석 중… " +
+                                (index + 1) +
+                                "/" +
+                                sampleTimes.size
+                        )
+                    }
 
                     var decoded: Bitmap? = null
                     var oriented: Bitmap? = null
@@ -252,14 +257,16 @@ class FaceTrackingAnalyzer(
                         }
                     }
 
-                    onProgress(
-                        ((index + 1f) / sampleTimes.size)
-                            .coerceIn(0f, 1f)
-                    )
+                    post {
+                        onProgress(
+                            ((index + 1f) / sampleTimes.size)
+                                .coerceIn(0f, 1f)
+                        )
+                    }
                 }
 
                 if (cancelled.get()) {
-                    onCancelled()
+                    post(onCancelled)
                     return@Thread
                 }
 
@@ -271,15 +278,17 @@ class FaceTrackingAnalyzer(
                     fallbackY = initialFocusY
                 )
 
-                onComplete(completed)
+                post { onComplete(completed) }
             } catch (e: Throwable) {
                 if (cancelled.get()) {
-                    onCancelled()
+                    post(onCancelled)
                 } else {
-                    onError(
-                        "얼굴 추적 분석에 실패했습니다. " +
-                            (e.message ?: e.javaClass.simpleName)
-                    )
+                    post {
+                        onError(
+                            "얼굴 추적 분석에 실패했습니다. " +
+                                (e.message ?: e.javaClass.simpleName)
+                        )
+                    }
                 }
             } finally {
                 runCatching { retriever.release() }
@@ -378,6 +387,10 @@ class FaceTrackingAnalyzer(
                 )
             )
         }
+    }
+
+    private fun post(block: () -> Unit) {
+        mainHandler.post(block)
     }
 
     private fun rotateBitmap(
