@@ -16,7 +16,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.pow
 
 data class FocusKeyframe(
     val timeMs: Long,
@@ -324,9 +323,11 @@ class FaceTrackingAnalyzer(
                 box.exactCenterY() /
                     height.coerceAtLeast(1).toFloat()
 
+            val dx = cx - targetX
+            val dy = cy - targetY
             val distance =
-                (cx - targetX).pow(2) +
-                    (cy - targetY).pow(2)
+                dx * dx +
+                    dy * dy
 
             val area =
                 (
