@@ -11,11 +11,25 @@ import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.Face
 import com.google.mlkit.vision.face.FaceDetection
+import com.google.mlkit.vision.face.FaceDetector
 import com.google.mlkit.vision.face.FaceDetectorOptions
+import com.google.mlkit.vision.pose.Pose
+import com.google.mlkit.vision.pose.PoseDetection
+import com.google.mlkit.vision.pose.PoseDetector
+import com.google.mlkit.vision.pose.PoseLandmark
+import com.google.mlkit.vision.pose.defaults.PoseDetectorOptions
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.ceil
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
+
+enum class TrackingMode {
+    FIXED,
+    FACE,
+    UPPER_BODY,
+    FULL_BODY
+}
 
 data class FocusKeyframe(
     val timeMs: Long,
@@ -39,6 +53,7 @@ class FaceTrackingAnalyzer(
         endMs: Long,
         initialFocusX: Float,
         initialFocusY: Float,
+        mode: TrackingMode = TrackingMode.FACE,
         onStatus: (String) -> Unit,
         onProgress: (Float) -> Unit,
         onComplete: (List<FocusKeyframe>) -> Unit,
@@ -48,30 +63,35 @@ class FaceTrackingAnalyzer(
         cancel()
         cancelled.set(false)
 
+        if (mode == TrackingMode.FIXED) {
+            post { onComplete(emptyList()) }
+            return
+        }
+
         Thread {
-            val detector = FaceDetection.getClient(
-                FaceDetectorOptions.Builder()
-                    .setPerformanceMode(
-                        FaceDetectorOptions.PERFORMANCE_MODE_FAST
-                    )
-                    .setLandmarkMode(
-                        FaceDetectorOptions.LANDMARK_MODE_NONE
-                    )
-                    .setContourMode(
-                        FaceDetectorOptions.CONTOUR_MODE_NONE
-                    )
-                    .setClassificationMode(
-                        FaceDetectorOptions.CLASSIFICATION_MODE_NONE
-                    )
-                    .setMinFaceSize(0.07f)
-                    .enableTracking()
-                    .build()
-            )
+            val faceDetector = createFaceDetector()
+            val poseDetector =
+                if (mode == TrackingMode.UPPER_BODY ||
+                    mode == TrackingMode.FULL_BODY
+                ) {
+                    createPoseDetector()
+                } else {
+                    null
+                }
 
             val retriever = MediaMetadataRetriever()
 
             try {
-                post { onStatus("얼굴 추적 준비 중…") }
+                post {
+                    onStatus(
+                        when (mode) {
+                            TrackingMode.FACE -> "얼굴 추적 준비 중…"
+                            TrackingMode.UPPER_BODY -> "상체 추적 준비 중…"
+                            TrackingMode.FULL_BODY -> "전신 추적 준비 중…"
+                            TrackingMode.FIXED -> "포커스 준비 중…"
+                        }
+                    )
+                }
                 post { onProgress(0.01f) }
 
                 retriever.setDataSource(context, sourceUri)
@@ -104,13 +124,19 @@ class FaceTrackingAnalyzer(
                 val clipEnd = endMs.coerceAtLeast(clipStart + 100L)
                 val duration = clipEnd - clipStart
 
-                // Keep analysis responsive on phones: at most about 72
-                // detection samples, while still sampling moving faces
-                // around 4 times per second for short clips.
-                val sampleInterval = max(
-                    250L,
-                    ceil(duration / 72.0).toLong()
-                )
+                val sampleInterval = when (mode) {
+                    TrackingMode.FACE -> max(
+                        250L,
+                        ceil(duration / 72.0).toLong()
+                    )
+                    TrackingMode.UPPER_BODY,
+                    TrackingMode.FULL_BODY -> max(
+                        300L,
+                        ceil(duration / 60.0).toLong()
+                    )
+                    TrackingMode.FIXED -> duration
+                }
+
                 val sampleTimes = buildList {
                     var t = clipStart
                     while (t < clipEnd) {
@@ -122,9 +148,12 @@ class FaceTrackingAnalyzer(
                     }
                 }
 
+                val maxAnalysisSide =
+                    if (mode == TrackingMode.FACE) 640.0 else 720.0
                 val scale = min(
                     1.0,
-                    640.0 / max(rawWidth, rawHeight).toDouble()
+                    maxAnalysisSide /
+                        max(rawWidth, rawHeight).toDouble()
                 )
                 val decodeWidth = max(
                     2,
@@ -141,6 +170,7 @@ class FaceTrackingAnalyzer(
                 var smoothedX = previousX
                 var smoothedY = previousY
                 var hasPoint = false
+                var consecutiveMisses = 0
 
                 val points = mutableListOf<FocusKeyframe>()
 
@@ -152,7 +182,8 @@ class FaceTrackingAnalyzer(
 
                     post {
                         onStatus(
-                            "얼굴 추적 분석 중… " +
+                            trackingLabel(mode) +
+                                " 분석 중… " +
                                 (index + 1) +
                                 "/" +
                                 sampleTimes.size
@@ -179,65 +210,138 @@ class FaceTrackingAnalyzer(
 
                         val source = decoded
                         if (source == null) {
+                            holdPreviousPoint(
+                                points,
+                                hasPoint,
+                                timeMs,
+                                smoothedX,
+                                smoothedY
+                            )
+                            consecutiveMisses += 1
                             return@forEachIndexed
                         }
 
                         oriented = rotateBitmap(source, rotation)
-                        val image = InputImage.fromBitmap(
-                            oriented,
-                            0
-                        )
+                        val image = InputImage.fromBitmap(oriented, 0)
 
-                        val faces = Tasks.await(
-                            detector.process(image)
-                        )
-
-                        val selected = selectFace(
-                            faces = faces,
-                            width = oriented.width,
-                            height = oriented.height,
-                            preferredTrackingId = preferredTrackingId,
-                            targetX = previousX,
-                            targetY = previousY
-                        )
-
-                        if (selected != null) {
-                            selected.trackingId?.let {
-                                preferredTrackingId = it
+                        val rawPoint = when (mode) {
+                            TrackingMode.FACE -> {
+                                val faces = Tasks.await(
+                                    faceDetector.process(image)
+                                )
+                                val selected = selectFace(
+                                    faces = faces,
+                                    width = oriented.width,
+                                    height = oriented.height,
+                                    preferredTrackingId = preferredTrackingId,
+                                    targetX = previousX,
+                                    targetY = previousY
+                                )
+                                selected?.trackingId?.let {
+                                    preferredTrackingId = it
+                                }
+                                selected?.let {
+                                    faceCenter(
+                                        it,
+                                        oriented.width,
+                                        oriented.height
+                                    )
+                                }
                             }
 
-                            val box = selected.boundingBox
-                            val rawX = (
-                                box.exactCenterX() /
-                                    oriented.width.toFloat()
-                                ).coerceIn(0f, 1f)
-                            val rawY = (
-                                box.exactCenterY() /
-                                    oriented.height.toFloat()
-                                ).coerceIn(0f, 1f)
+                            TrackingMode.UPPER_BODY,
+                            TrackingMode.FULL_BODY -> {
+                                val pose = poseDetector?.let {
+                                    Tasks.await(it.process(image))
+                                }
 
-                            // Low-pass smoothing prevents crop jitter.
+                                pose?.let {
+                                    poseCenter(
+                                        pose = it,
+                                        mode = mode,
+                                        width = oriented.width,
+                                        height = oriented.height
+                                    )
+                                } ?: run {
+                                    val faces = Tasks.await(
+                                        faceDetector.process(image)
+                                    )
+                                    val selected = selectFace(
+                                        faces = faces,
+                                        width = oriented.width,
+                                        height = oriented.height,
+                                        preferredTrackingId = preferredTrackingId,
+                                        targetX = previousX,
+                                        targetY = previousY
+                                    )
+                                    selected?.trackingId?.let {
+                                        preferredTrackingId = it
+                                    }
+                                    selected?.let {
+                                        faceCenter(
+                                            it,
+                                            oriented.width,
+                                            oriented.height
+                                        )
+                                    }
+                                }
+                            }
+
+                            TrackingMode.FIXED -> null
+                        }
+
+                        if (rawPoint != null) {
+                            val rawX = rawPoint.first
+                            val rawY = rawPoint.second
+
                             if (!hasPoint) {
                                 smoothedX = rawX
                                 smoothedY = rawY
                                 hasPoint = true
                             } else {
-                                val alpha = 0.42f
-                                smoothedX =
-                                    smoothedX * (1f - alpha) +
-                                        rawX * alpha
-                                smoothedY =
-                                    smoothedY * (1f - alpha) +
-                                        rawY * alpha
+                                val dx = rawX - smoothedX
+                                val dy = rawY - smoothedY
+                                val distance = hypot(
+                                    dx.toDouble(),
+                                    dy.toDouble()
+                                ).toFloat()
+
+                                val deadZone = 0.006f
+                                val alpha = when {
+                                    distance < deadZone -> 0f
+                                    distance > 0.18f -> 0.62f
+                                    mode == TrackingMode.FACE -> 0.44f
+                                    else -> 0.36f
+                                }
+
+                                val cappedDx =
+                                    dx.coerceIn(-0.18f, 0.18f)
+                                val cappedDy =
+                                    dy.coerceIn(-0.18f, 0.18f)
+
+                                smoothedX += cappedDx * alpha
+                                smoothedY += cappedDy * alpha
                             }
 
+                            smoothedX = smoothedX.coerceIn(0f, 1f)
+                            smoothedY = smoothedY.coerceIn(0f, 1f)
                             previousX = smoothedX
                             previousY = smoothedY
+                            consecutiveMisses = 0
 
                             points += FocusKeyframe(
                                 timeMs = timeMs,
-                                x = smoothedX.coerceIn(0f, 1f),
-                                y = smoothedY.coerceIn(0f, 1f)
+                                x = smoothedX,
+                                y = smoothedY
+                            )
+                        } else {
+                            consecutiveMisses += 1
+                            holdPreviousPoint(
+                                points = points,
+                                hasPoint = hasPoint,
+                                timeMs = timeMs,
+                                x = smoothedX,
+                                y = smoothedY
                             )
                         }
                     } finally {
@@ -272,28 +376,193 @@ class FaceTrackingAnalyzer(
                 val completed = ensureBoundaryPoints(
                     points = points,
                     startMs = clipStart,
-                    endMs = clipEnd,
-                    fallbackX = initialFocusX,
-                    fallbackY = initialFocusY
+                    endMs = clipEnd
                 )
 
-                post { onComplete(completed) }
+                post {
+                    onComplete(completed)
+                }
             } catch (e: Throwable) {
                 if (cancelled.get()) {
                     post(onCancelled)
                 } else {
                     post {
                         onError(
-                            "얼굴 추적 분석에 실패했습니다. " +
+                            trackingLabel(mode) +
+                                " 분석에 실패했습니다. " +
                                 (e.message ?: e.javaClass.simpleName)
                         )
                     }
                 }
             } finally {
                 runCatching { retriever.release() }
-                runCatching { detector.close() }
+                runCatching { faceDetector.close() }
+                runCatching { poseDetector?.close() }
             }
         }.start()
+    }
+
+    private fun createFaceDetector(): FaceDetector {
+        return FaceDetection.getClient(
+            FaceDetectorOptions.Builder()
+                .setPerformanceMode(
+                    FaceDetectorOptions.PERFORMANCE_MODE_FAST
+                )
+                .setLandmarkMode(
+                    FaceDetectorOptions.LANDMARK_MODE_NONE
+                )
+                .setContourMode(
+                    FaceDetectorOptions.CONTOUR_MODE_NONE
+                )
+                .setClassificationMode(
+                    FaceDetectorOptions.CLASSIFICATION_MODE_NONE
+                )
+                .setMinFaceSize(0.07f)
+                .enableTracking()
+                .build()
+        )
+    }
+
+    private fun createPoseDetector(): PoseDetector {
+        return PoseDetection.getClient(
+            PoseDetectorOptions.Builder()
+                .setDetectorMode(
+                    PoseDetectorOptions.STREAM_MODE
+                )
+                .build()
+        )
+    }
+
+    private fun trackingLabel(mode: TrackingMode): String {
+        return when (mode) {
+            TrackingMode.FIXED -> "고정 포커스"
+            TrackingMode.FACE -> "얼굴 추적"
+            TrackingMode.UPPER_BODY -> "상체 추적"
+            TrackingMode.FULL_BODY -> "전신 추적"
+        }
+    }
+
+    private fun faceCenter(
+        face: Face,
+        width: Int,
+        height: Int
+    ): Pair<Float, Float> {
+        val box = face.boundingBox
+        return Pair(
+            (
+                box.exactCenterX() /
+                    width.coerceAtLeast(1).toFloat()
+                ).coerceIn(0f, 1f),
+            (
+                box.exactCenterY() /
+                    height.coerceAtLeast(1).toFloat()
+                ).coerceIn(0f, 1f)
+        )
+    }
+
+    private fun poseCenter(
+        pose: Pose,
+        mode: TrackingMode,
+        width: Int,
+        height: Int
+    ): Pair<Float, Float>? {
+        val landmarkTypes = when (mode) {
+            TrackingMode.UPPER_BODY -> listOf(
+                PoseLandmark.NOSE,
+                PoseLandmark.LEFT_EAR,
+                PoseLandmark.RIGHT_EAR,
+                PoseLandmark.LEFT_SHOULDER,
+                PoseLandmark.RIGHT_SHOULDER,
+                PoseLandmark.LEFT_ELBOW,
+                PoseLandmark.RIGHT_ELBOW,
+                PoseLandmark.LEFT_HIP,
+                PoseLandmark.RIGHT_HIP
+            )
+            TrackingMode.FULL_BODY -> listOf(
+                PoseLandmark.NOSE,
+                PoseLandmark.LEFT_EAR,
+                PoseLandmark.RIGHT_EAR,
+                PoseLandmark.LEFT_SHOULDER,
+                PoseLandmark.RIGHT_SHOULDER,
+                PoseLandmark.LEFT_ELBOW,
+                PoseLandmark.RIGHT_ELBOW,
+                PoseLandmark.LEFT_WRIST,
+                PoseLandmark.RIGHT_WRIST,
+                PoseLandmark.LEFT_HIP,
+                PoseLandmark.RIGHT_HIP,
+                PoseLandmark.LEFT_KNEE,
+                PoseLandmark.RIGHT_KNEE,
+                PoseLandmark.LEFT_ANKLE,
+                PoseLandmark.RIGHT_ANKLE,
+                PoseLandmark.LEFT_HEEL,
+                PoseLandmark.RIGHT_HEEL,
+                PoseLandmark.LEFT_FOOT_INDEX,
+                PoseLandmark.RIGHT_FOOT_INDEX
+            )
+            else -> emptyList()
+        }
+
+        val landmarks = landmarkTypes
+            .mapNotNull { pose.getPoseLandmark(it) }
+            .filter {
+                it.inFrameLikelihood >= 0.35f
+            }
+
+        if (landmarks.size < 3) {
+            return null
+        }
+
+        val frameWidth = width.coerceAtLeast(1).toFloat()
+        val frameHeight = height.coerceAtLeast(1).toFloat()
+
+        val xs = landmarks.map {
+            (it.position.x / frameWidth).coerceIn(0f, 1f)
+        }
+        val ys = landmarks.map {
+            (it.position.y / frameHeight).coerceIn(0f, 1f)
+        }
+
+        val minX = xs.minOrNull() ?: return null
+        val maxX = xs.maxOrNull() ?: return null
+        val minY = ys.minOrNull() ?: return null
+        val maxY = ys.maxOrNull() ?: return null
+
+        val centerX = ((minX + maxX) * 0.5f)
+            .coerceIn(0f, 1f)
+
+        val centerY = when (mode) {
+            TrackingMode.UPPER_BODY -> {
+                (
+                    minY +
+                        (maxY - minY) * 0.56f
+                    ).coerceIn(0f, 1f)
+            }
+            TrackingMode.FULL_BODY -> {
+                (
+                    minY +
+                        (maxY - minY) * 0.50f
+                    ).coerceIn(0f, 1f)
+            }
+            else -> ((minY + maxY) * 0.5f)
+                .coerceIn(0f, 1f)
+        }
+
+        return Pair(centerX, centerY)
+    }
+
+    private fun holdPreviousPoint(
+        points: MutableList<FocusKeyframe>,
+        hasPoint: Boolean,
+        timeMs: Long,
+        x: Float,
+        y: Float
+    ) {
+        if (!hasPoint) return
+        points += FocusKeyframe(
+            timeMs = timeMs,
+            x = x.coerceIn(0f, 1f),
+            y = y.coerceIn(0f, 1f)
+        )
     }
 
     private fun selectFace(
@@ -339,8 +608,6 @@ class FaceTrackingAnalyzer(
                             height.coerceAtLeast(1)
                         ).toFloat()
 
-            // Prefer the face nearest the user's tapped focus,
-            // with a small bias toward a larger/clearer face.
             distance - area * 0.18f
         }
     }
@@ -348,9 +615,7 @@ class FaceTrackingAnalyzer(
     private fun ensureBoundaryPoints(
         points: List<FocusKeyframe>,
         startMs: Long,
-        endMs: Long,
-        fallbackX: Float,
-        fallbackY: Float
+        endMs: Long
     ): List<FocusKeyframe> {
         if (points.isEmpty()) {
             return emptyList()
@@ -358,6 +623,7 @@ class FaceTrackingAnalyzer(
 
         val sorted = points
             .sortedBy { it.timeMs }
+            .distinctBy { it.timeMs }
             .toMutableList()
 
         if (sorted.first().timeMs > startMs) {
@@ -379,15 +645,7 @@ class FaceTrackingAnalyzer(
             )
         }
 
-        return sorted.ifEmpty {
-            listOf(
-                FocusKeyframe(
-                    startMs,
-                    fallbackX.coerceIn(0f, 1f),
-                    fallbackY.coerceIn(0f, 1f)
-                )
-            )
-        }
+        return sorted
     }
 
     private fun post(block: () -> Unit) {
