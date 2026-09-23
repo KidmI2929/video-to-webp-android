@@ -87,8 +87,7 @@ class ConversionEngine(private val context: Context) {
         onProgress: (Float) -> Unit,
         onComplete: (ConversionResult) -> Unit,
         onError: (String) -> Unit,
-        onCancelled: () -> Unit,
-        cachedInput: File?
+        onCancelled: () -> Unit
     ) {
         cancel()
         cancelled.set(false)
