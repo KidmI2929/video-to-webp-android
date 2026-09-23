@@ -71,4 +71,4 @@ GitHub Actions에서 앱 전용 ARM64 FFmpegKit AAR을 직접 빌드합니다.
 
 ## APK
 
-GitHub **Actions → Build Android APK → 최신 성공 빌드 → Artifacts → VideoToWebP-v0.6-apk** 에서 받을 수 있습니다.
+GitHub **Actions → Build Android APK → 최신 성공 빌드 → Artifacts → MotionWebP-v0.7-apk** 에서 받을 수 있습니다.
