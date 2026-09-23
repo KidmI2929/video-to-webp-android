@@ -41,6 +41,8 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Scaffold
@@ -61,6 +63,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -318,6 +321,9 @@ private fun VideoToWebPApp(
     var result by remember { mutableStateOf<ConversionResult?>(null) }
     var selectedResultPart by remember { mutableIntStateOf(0) }
     var error by remember { mutableStateOf<String?>(null) }
+    var selectedTab by rememberSaveable {
+        mutableIntStateOf(0)
+    }
 
     val videoPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -338,6 +344,7 @@ private fun VideoToWebPApp(
             progress = 0f
             result = null
             selectedResultPart = 0
+            selectedTab = 0
             videoInfo = null
             videoUri = uri
             currentPositionMs = 0L
@@ -568,6 +575,7 @@ private fun VideoToWebPApp(
                     progress = 1f
                     result = it
                     selectedResultPart = 0
+                    selectedTab = 3
                     status = if (it.parts.size == 1) {
                         "변환 완료 · " + folderName
                     } else {
@@ -642,88 +650,52 @@ private fun VideoToWebPApp(
     }
 
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.background
+        containerColor = MaterialTheme.colorScheme.background,
+        bottomBar = {
+            Column {
+                if (videoInfo != null) {
+                    CompactConversionBar(
+                        converting = converting,
+                        progress = progress,
+                        status = status,
+                        enabled = videoInfo != null,
+                        onConvert = { startConversion() },
+                        onCancel = {
+                            subjectTracker.cancel()
+                            engine.cancel()
+                            status = "취소 요청 중…"
+                        }
+                    )
+                }
+
+                MobileNavigationBar(
+                    selectedTab = selectedTab,
+                    hasResult = result != null,
+                    onSelect = { selectedTab = it }
+                )
+            }
+        }
     ) { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 18.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp)
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Header(
+            CompactHeader(
                 themeMode = themeMode,
                 onThemeModeChange = onThemeModeChange
             )
 
-            if (videoUri == null) {
-                EmptyVideoCard(
-                    onPick = { videoPicker.launch(arrayOf("video/*")) }
-                )
-            } else {
-                PlayerSection(
-                    exoPlayer = exoPlayer,
-                    info = videoInfo,
-                    currentPositionMs = currentPositionMs,
-                    isPlaying = isPlaying,
-                    startSec = startSec,
-                    endSec = endSec,
-                    outputFps = fps,
+            if (videoInfo != null) {
+                SettingsSummaryBar(
+                    maxSide = maxSide,
+                    fps = fps,
+                    quality = quality,
                     cropAspect = cropAspect,
-                    focusX = focusX,
-                    focusY = focusY,
-                    converting = converting,
-                    onPickAnother = {
-                        videoPicker.launch(arrayOf("video/*"))
-                    },
-                    onTogglePlay = {
-                        if (exoPlayer.isPlaying) {
-                            exoPlayer.pause()
-                        } else {
-                            val startMs = (startSec * 1000).toLong()
-                            val endMs = (endSec * 1000).toLong()
-                            if (
-                                exoPlayer.currentPosition < startMs ||
-                                exoPlayer.currentPosition >= endMs
-                            ) {
-                                exoPlayer.seekTo(startMs)
-                            }
-                            exoPlayer.play()
-                        }
-                    },
-                    onSeekBy = { delta ->
-                        exoPlayer.pause()
-                        seekPlayer(currentPositionMs + delta)
-                    },
-                    onSetIn = {
-                        videoInfo?.let {
-                            val maxIn = (endSec - 0.1f).coerceAtLeast(0f)
-                            startSec = (currentPositionMs / 1000f)
-                                .coerceIn(0f, maxIn)
-                            exoPlayer.pause()
-                        }
-                    },
-                    onSetOut = {
-                        videoInfo?.let { currentInfo ->
-                            val maxOut = currentInfo.durationMs / 1000f
-                            val minOut = (startSec + 0.1f)
-                                .coerceAtMost(maxOut)
-                            endSec = (currentPositionMs / 1000f)
-                                .coerceIn(minOut, maxOut)
-                            exoPlayer.pause()
-                        }
-                    },
-                    onTrimChange = { newStart, newEnd, seekSec ->
-                        startSec = newStart
-                        endSec = newEnd
-                        exoPlayer.pause()
-                        seekPlayer((seekSec * 1000f).toLong())
-                    },
-                    onFocusChange = { x, y ->
-                        focusX = x.coerceIn(0f, 1f)
-                        focusY = y.coerceIn(0f, 1f)
-                    }
+                    trackingMode = trackingMode,
+                    splitMode = splitMode
                 )
             }
 
@@ -733,102 +705,286 @@ private fun VideoToWebPApp(
                 )
             }
 
-            videoInfo?.let {
-                OutputSettingsCard(
-                    fps = fps,
-                    quality = quality,
-                    maxSide = maxSide,
-                    lossless = lossless,
-                    loopForever = loopForever,
-                    speed = speed,
-                    enabled = !converting,
-                    onFpsChange = { fps = it },
-                    onQualityChange = { quality = it },
-                    onMaxSideChange = { maxSide = it },
-                    onLosslessChange = { lossless = it },
-                    onLoopChange = { loopForever = it },
-                    onSpeedChange = { speed = it },
-                    onApplyPreset = { preset ->
-                        maxSide = preset.maxSide
-                        fps = preset.fps
-                        quality = preset.quality
-                        lossless = false
-                        speed = preset.speed
+            when (selectedTab) {
+                0 -> {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        if (videoUri == null) {
+                            EmptyVideoCard(
+                                onPick = {
+                                    videoPicker.launch(arrayOf("video/*"))
+                                }
+                            )
+                        } else {
+                            PlayerSection(
+                                exoPlayer = exoPlayer,
+                                info = videoInfo,
+                                currentPositionMs = currentPositionMs,
+                                isPlaying = isPlaying,
+                                startSec = startSec,
+                                endSec = endSec,
+                                outputFps = fps,
+                                cropAspect = cropAspect,
+                                focusX = focusX,
+                                focusY = focusY,
+                                converting = converting,
+                                onPickAnother = {
+                                    videoPicker.launch(arrayOf("video/*"))
+                                },
+                                onTogglePlay = {
+                                    if (exoPlayer.isPlaying) {
+                                        exoPlayer.pause()
+                                    } else {
+                                        val startMs =
+                                            (startSec * 1000).toLong()
+                                        val endMs =
+                                            (endSec * 1000).toLong()
+                                        if (
+                                            exoPlayer.currentPosition < startMs ||
+                                            exoPlayer.currentPosition >= endMs
+                                        ) {
+                                            exoPlayer.seekTo(startMs)
+                                        }
+                                        exoPlayer.play()
+                                    }
+                                },
+                                onSeekBy = { delta ->
+                                    exoPlayer.pause()
+                                    seekPlayer(
+                                        currentPositionMs + delta
+                                    )
+                                },
+                                onSetIn = {
+                                    videoInfo?.let {
+                                        val maxIn =
+                                            (endSec - 0.1f)
+                                                .coerceAtLeast(0f)
+                                        startSec =
+                                            (currentPositionMs / 1000f)
+                                                .coerceIn(0f, maxIn)
+                                        exoPlayer.pause()
+                                    }
+                                },
+                                onSetOut = {
+                                    videoInfo?.let { currentInfo ->
+                                        val maxOut =
+                                            currentInfo.durationMs / 1000f
+                                        val minOut =
+                                            (startSec + 0.1f)
+                                                .coerceAtMost(maxOut)
+                                        endSec =
+                                            (currentPositionMs / 1000f)
+                                                .coerceIn(
+                                                    minOut,
+                                                    maxOut
+                                                )
+                                        exoPlayer.pause()
+                                    }
+                                },
+                                onTrimChange = {
+                                        newStart,
+                                        newEnd,
+                                        seekSec ->
+                                    startSec = newStart
+                                    endSec = newEnd
+                                    exoPlayer.pause()
+                                    seekPlayer(
+                                        (seekSec * 1000f).toLong()
+                                    )
+                                },
+                                onFocusChange = { x, y ->
+                                    focusX = x.coerceIn(0f, 1f)
+                                    focusY = y.coerceIn(0f, 1f)
+                                }
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
                     }
-                )
+                }
 
-                FramingCard(
-                    cropAspect = cropAspect,
-                    focusX = focusX,
-                    focusY = focusY,
-                    trackingMode = trackingMode,
-                    enabled = !converting,
-                    onCropAspectChange = { cropAspect = it },
-                    onFocusChange = { x, y ->
-                        focusX = x.coerceIn(0f, 1f)
-                        focusY = y.coerceIn(0f, 1f)
-                    },
-                    onTrackingModeChange = {
-                        trackingMode = it
+                1 -> {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        if (videoInfo == null) {
+                            EmptyTabHint(
+                                title = "추적할 영상이 없습니다",
+                                message = "편집 탭에서 먼저 영상을 선택하세요.",
+                                action = "편집으로 이동",
+                                onAction = { selectedTab = 0 }
+                            )
+                        } else {
+                            CompactFocusPreview(
+                                exoPlayer = exoPlayer,
+                                info = videoInfo,
+                                cropAspect = cropAspect,
+                                focusX = focusX,
+                                focusY = focusY,
+                                converting = converting,
+                                onFocusChange = { x, y ->
+                                    focusX = x.coerceIn(0f, 1f)
+                                    focusY = y.coerceIn(0f, 1f)
+                                }
+                            )
+
+                            FramingCard(
+                                cropAspect = cropAspect,
+                                focusX = focusX,
+                                focusY = focusY,
+                                trackingMode = trackingMode,
+                                enabled = !converting,
+                                onCropAspectChange = {
+                                    cropAspect = it
+                                },
+                                onFocusChange = { x, y ->
+                                    focusX = x.coerceIn(0f, 1f)
+                                    focusY = y.coerceIn(0f, 1f)
+                                },
+                                onTrackingModeChange = {
+                                    trackingMode = it
+                                }
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
                     }
-                )
+                }
 
-                StorageCard(
-                    folderName = folderName,
-                    customFolder = outputTreeUri != null,
-                    enabled = !converting,
-                    onChooseFolder = { folderPicker.launch(outputTreeUri) },
-                    onResetFolder = {
-                        outputTreeUri = null
-                        prefs.edit().remove("output_tree_uri").apply()
+                2 -> {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        if (videoInfo == null) {
+                            EmptyTabHint(
+                                title = "출력할 영상이 없습니다",
+                                message = "편집 탭에서 영상을 선택하면 출력 설정을 사용할 수 있습니다.",
+                                action = "영상 선택",
+                                onAction = { selectedTab = 0 }
+                            )
+                        } else {
+                            OutputSettingsCard(
+                                fps = fps,
+                                quality = quality,
+                                maxSide = maxSide,
+                                lossless = lossless,
+                                loopForever = loopForever,
+                                speed = speed,
+                                enabled = !converting,
+                                onFpsChange = { fps = it },
+                                onQualityChange = { quality = it },
+                                onMaxSideChange = { maxSide = it },
+                                onLosslessChange = { lossless = it },
+                                onLoopChange = { loopForever = it },
+                                onSpeedChange = { speed = it },
+                                onApplyPreset = { preset ->
+                                    maxSide = preset.maxSide
+                                    fps = preset.fps
+                                    quality = preset.quality
+                                    lossless = false
+                                    speed = preset.speed
+                                }
+                            )
+
+                            StorageCard(
+                                folderName = folderName,
+                                customFolder = outputTreeUri != null,
+                                enabled = !converting,
+                                onChooseFolder = {
+                                    folderPicker.launch(outputTreeUri)
+                                },
+                                onResetFolder = {
+                                    outputTreeUri = null
+                                    prefs.edit()
+                                        .remove("output_tree_uri")
+                                        .apply()
+                                }
+                            )
+
+                            SplitCard(
+                                mode = splitMode,
+                                count = splitCount,
+                                targetMb = targetPartSizeMb,
+                                enabled = !converting,
+                                onModeChange = { splitMode = it },
+                                onCountChange = {
+                                    splitCount = it
+                                },
+                                onTargetMbChange = {
+                                    targetPartSizeMb = it
+                                }
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
                     }
-                )
+                }
 
-                SplitCard(
-                    mode = splitMode,
-                    count = splitCount,
-                    targetMb = targetPartSizeMb,
-                    enabled = !converting,
-                    onModeChange = { splitMode = it },
-                    onCountChange = { splitCount = it },
-                    onTargetMbChange = { targetPartSizeMb = it }
-                )
-
-                ConversionActionCard(
-                    converting = converting,
-                    progress = progress,
-                    status = status,
-                    onConvert = { startConversion() },
-                    onCancel = {
-                        subjectTracker.cancel()
-                        engine.cancel()
-                        status = "취소 요청 중…"
+                else -> {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        val converted = result
+                        if (converted == null) {
+                            EmptyTabHint(
+                                title = "아직 결과가 없습니다",
+                                message = "다른 탭에서 설정을 마친 뒤 아래 고정 버튼으로 변환하세요.",
+                                action = "출력 설정 보기",
+                                onAction = { selectedTab = 2 }
+                            )
+                        } else {
+                            ResultCard(
+                                result = converted,
+                                selectedIndex = selectedResultPart,
+                                onSelectPart = {
+                                    selectedResultPart = it
+                                },
+                                onOpenSelected = {
+                                    converted.parts
+                                        .getOrNull(
+                                            selectedResultPart
+                                        )
+                                        ?.let {
+                                            openResult(
+                                                context,
+                                                it.uri
+                                            )
+                                        }
+                                },
+                                onShareSelected = {
+                                    converted.parts
+                                        .getOrNull(
+                                            selectedResultPart
+                                        )
+                                        ?.let {
+                                            shareSingleResult(
+                                                context,
+                                                it.uri
+                                            )
+                                        }
+                                },
+                                onShareAll = {
+                                    shareResult(
+                                        context,
+                                        converted
+                                    )
+                                }
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
                     }
-                )
+                }
             }
-
-            result?.let { converted ->
-                ResultCard(
-                    result = converted,
-                    selectedIndex = selectedResultPart,
-                    onSelectPart = { selectedResultPart = it },
-                    onOpenSelected = {
-                        converted.parts
-                            .getOrNull(selectedResultPart)
-                            ?.let { openResult(context, it.uri) }
-                    },
-                    onShareSelected = {
-                        converted.parts
-                            .getOrNull(selectedResultPart)
-                            ?.let { shareSingleResult(context, it.uri) }
-                    },
-                    onShareAll = {
-                        shareResult(context, converted)
-                    }
-                )
-            }
-
-            Spacer(modifier = Modifier.height(20.dp))
         }
     }
 
