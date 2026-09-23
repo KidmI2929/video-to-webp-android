@@ -394,7 +394,8 @@ fun VideoToWebPApp() {
                 AnimatedWebPPreview(converted.uri)
 
                 Text(
-                    "${converted.fileName} · ${formatBytes(converted.sizeBytes)}",
+                    "${converted.fileName} · ${formatBytes(converted.sizeBytes)} · " +
+                        "%.2f초".format(converted.elapsedMs / 1000.0),
                     style = MaterialTheme.typography.bodyMedium
                 )
 
