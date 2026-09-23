@@ -1063,6 +1063,419 @@ private fun Header(
 }
 
 @Composable
+private fun CompactHeader(
+    themeMode: ThemeMode,
+    onThemeModeChange: (ThemeMode) -> Unit
+) {
+    val nextTheme = when (themeMode) {
+        ThemeMode.SYSTEM -> ThemeMode.LIGHT
+        ThemeMode.LIGHT -> ThemeMode.DARK
+        ThemeMode.DARK -> ThemeMode.SYSTEM
+    }
+    val themeLabel = when (themeMode) {
+        ThemeMode.SYSTEM -> "시스템"
+        ThemeMode.LIGHT -> "라이트"
+        ThemeMode.DARK -> "다크"
+    }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(1.dp)
+        ) {
+            Text(
+                "Motion WebP",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                "모바일 편집기",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        FilledTonalButton(
+            onClick = {
+                onThemeModeChange(nextTheme)
+            }
+        ) {
+            Text(themeLabel)
+        }
+    }
+}
+
+@Composable
+private fun SettingsSummaryBar(
+    maxSide: Int?,
+    fps: Int,
+    quality: Int,
+    cropAspect: CropAspect,
+    trackingMode: TrackingMode,
+    splitMode: SplitMode
+) {
+    val aspectLabel = when (cropAspect) {
+        CropAspect.ORIGINAL -> "원본비"
+        CropAspect.SQUARE -> "1:1"
+        CropAspect.PORTRAIT_4_5 -> "4:5"
+        CropAspect.PORTRAIT_9_16 -> "9:16"
+        CropAspect.PORTRAIT_3_4 -> "3:4"
+        CropAspect.LANDSCAPE_16_9 -> "16:9"
+    }
+    val trackingLabel = when (trackingMode) {
+        TrackingMode.FIXED -> "고정"
+        TrackingMode.FACE -> "얼굴"
+        TrackingMode.UPPER_BODY -> "상체"
+        TrackingMode.FULL_BODY -> "전신"
+    }
+    val splitLabel = when (splitMode) {
+        SplitMode.NONE -> "1파일"
+        SplitMode.COUNT -> "개수분할"
+        SplitMode.SIZE -> "용량분할"
+    }
+
+    LazyRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(7.dp)
+    ) {
+        items(
+            listOf(
+                (maxSide?.toString() ?: "원본") + "p",
+                fps.toString() + "fps",
+                "Q" + quality,
+                aspectLabel,
+                trackingLabel,
+                splitLabel
+            )
+        ) { label ->
+            Surface(
+                shape = RoundedCornerShape(999.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant
+            ) {
+                Text(
+                    label,
+                    modifier = Modifier.padding(
+                        horizontal = 10.dp,
+                        vertical = 6.dp
+                    ),
+                    style = MaterialTheme.typography.labelMedium
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MobileNavigationBar(
+    selectedTab: Int,
+    hasResult: Boolean,
+    onSelect: (Int) -> Unit
+) {
+    NavigationBar {
+        val tabs = listOf(
+            Triple("편집", "✂", false),
+            Triple("추적", "◎", false),
+            Triple("출력", "⚙", false),
+            Triple(
+                if (hasResult) "결과 •" else "결과",
+                "✓",
+                hasResult
+            )
+        )
+
+        tabs.forEachIndexed { index, tab ->
+            NavigationBarItem(
+                selected = selectedTab == index,
+                onClick = { onSelect(index) },
+                icon = {
+                    Text(
+                        tab.second,
+                        fontWeight = if (selectedTab == index) {
+                            FontWeight.Bold
+                        } else {
+                            FontWeight.Normal
+                        }
+                    )
+                },
+                label = {
+                    Text(tab.first)
+                }
+            )
+        }
+    }
+}
+
+@Composable
+private fun CompactConversionBar(
+    converting: Boolean,
+    progress: Float,
+    status: String,
+    enabled: Boolean,
+    onConvert: () -> Unit,
+    onCancel: () -> Unit
+) {
+    Surface(
+        tonalElevation = 4.dp,
+        shadowElevation = 4.dp
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(
+                    horizontal = 14.dp,
+                    vertical = 8.dp
+                ),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            if (converting) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(
+                            status,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                        LinearProgressIndicator(
+                            progress = { progress },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    OutlinedButton(
+                        onClick = onCancel
+                    ) {
+                        Text("취소")
+                    }
+                }
+            } else {
+                Button(
+                    onClick = onConvert,
+                    enabled = enabled,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                ) {
+                    Text(
+                        "Animated WebP 만들기",
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmptyTabHint(
+    title: String,
+    message: String,
+    action: String,
+    onAction: () -> Unit
+) {
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            FilledTonalButton(
+                onClick = onAction,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(action)
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompactFocusPreview(
+    exoPlayer: ExoPlayer,
+    info: VideoInfo,
+    cropAspect: CropAspect,
+    focusX: Float,
+    focusY: Float,
+    converting: Boolean,
+    onFocusChange: (Float, Float) -> Unit
+) {
+    val aspect = if (
+        info.width > 0 &&
+        info.height > 0
+    ) {
+        (info.width.toFloat() / info.height.toFloat())
+            .coerceIn(0.56f, 1.9f)
+    } else {
+        16f / 9f
+    }
+    val markerColor = MaterialTheme.colorScheme.secondary
+
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp)
+    ) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(0.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(aspect),
+                contentAlignment = Alignment.Center
+            ) {
+                AndroidView(
+                    factory = { ctx ->
+                        PlayerView(ctx).apply {
+                            player = exoPlayer
+                            useController = false
+                            resizeMode =
+                                AspectRatioFrameLayout.RESIZE_MODE_FIT
+                            setShowBuffering(
+                                PlayerView.SHOW_BUFFERING_WHEN_PLAYING
+                            )
+                        }
+                    },
+                    update = { view ->
+                        view.player = exoPlayer
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                Canvas(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(
+                            cropAspect,
+                            converting
+                        ) {
+                            if (
+                                !converting &&
+                                cropAspect != CropAspect.ORIGINAL
+                            ) {
+                                detectTapGestures { offset ->
+                                    val width =
+                                        size.width.toFloat()
+                                            .coerceAtLeast(1f)
+                                    val height =
+                                        size.height.toFloat()
+                                            .coerceAtLeast(1f)
+                                    onFocusChange(
+                                        (offset.x / width)
+                                            .coerceIn(0f, 1f),
+                                        (offset.y / height)
+                                            .coerceIn(0f, 1f)
+                                    )
+                                }
+                            }
+                        }
+                ) {
+                    cropAspect.ratio?.let { targetRatio ->
+                        val ratio = targetRatio.toFloat()
+                        val canvasRatio =
+                            size.width / size.height
+
+                        val cropWidth: Float
+                        val cropHeight: Float
+
+                        if (canvasRatio > ratio) {
+                            cropHeight = size.height
+                            cropWidth = cropHeight * ratio
+                        } else {
+                            cropWidth = size.width
+                            cropHeight = cropWidth / ratio
+                        }
+
+                        val centerX =
+                            focusX.coerceIn(0f, 1f) *
+                                size.width
+                        val centerY =
+                            focusY.coerceIn(0f, 1f) *
+                                size.height
+
+                        val left =
+                            (centerX - cropWidth / 2f)
+                                .coerceIn(
+                                    0f,
+                                    (size.width - cropWidth)
+                                        .coerceAtLeast(0f)
+                                )
+                        val top =
+                            (centerY - cropHeight / 2f)
+                                .coerceIn(
+                                    0f,
+                                    (size.height - cropHeight)
+                                        .coerceAtLeast(0f)
+                                )
+
+                        drawRect(
+                            color = Color.White,
+                            topLeft =
+                                androidx.compose.ui.geometry.Offset(
+                                    left,
+                                    top
+                                ),
+                            size =
+                                androidx.compose.ui.geometry.Size(
+                                    cropWidth,
+                                    cropHeight
+                                ),
+                            style = Stroke(
+                                width = 3.dp.toPx()
+                            )
+                        )
+
+                        drawCircle(
+                            color = markerColor,
+                            radius = 7.dp.toPx(),
+                            center =
+                                androidx.compose.ui.geometry.Offset(
+                                    centerX,
+                                    centerY
+                                )
+                        )
+                    }
+                }
+            }
+
+            Text(
+                if (cropAspect == CropAspect.ORIGINAL) {
+                    "크롭 화면비를 선택하면 탭 포커스를 미리 볼 수 있습니다."
+                } else {
+                    "추적할 기준 위치를 영상에서 직접 탭하세요."
+                },
+                modifier = Modifier.padding(
+                    horizontal = 14.dp,
+                    vertical = 10.dp
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
 private fun EmptyVideoCard(
     onPick: () -> Unit
 ) {
