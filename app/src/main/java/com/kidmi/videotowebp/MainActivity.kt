@@ -89,7 +89,7 @@ fun VideoToWebPApp() {
     var maxSide by remember { mutableStateOf<Int?>(720) }
     var lossless by remember { mutableStateOf(false) }
     var loopForever by remember { mutableStateOf(true) }
-    var speed by remember { mutableStateOf(ConversionSpeed.BALANCED) }
+    var speed by remember { mutableStateOf(ConversionSpeed.FAST) }
 
     var converting by remember { mutableStateOf(false) }
     var progress by remember { mutableFloatStateOf(0f) }
