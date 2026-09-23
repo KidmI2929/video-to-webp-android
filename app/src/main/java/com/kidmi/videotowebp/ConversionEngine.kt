@@ -59,6 +59,7 @@ data class ConversionSettings(
     val cropAspect: CropAspect = CropAspect.ORIGINAL,
     val focusX: Float = 0.5f,
     val focusY: Float = 0.5f,
+    val cropZoom: Float = 1f,
     val focusTrack: List<FocusKeyframe> = emptyList()
 )
 
@@ -753,8 +754,18 @@ class ConversionEngine(private val context: Context) {
             // at the beginning of every encoded segment.
             add("setpts=PTS-STARTPTS")
 
-            settings.cropAspect.ratio?.let { targetRatio ->
-                val ratioText = String.format(Locale.US, "%.8f", targetRatio)
+            val cropZoom =
+                settings.cropZoom.coerceIn(1f, 4f)
+            val shouldCrop =
+                settings.cropAspect != CropAspect.ORIGINAL ||
+                    cropZoom > 1.001f
+
+            if (shouldCrop) {
+                val zoomText = String.format(
+                    Locale.US,
+                    "%.6f",
+                    cropZoom
+                )
 
                 val focusXExpr = buildFocusExpression(
                     points = settings.focusTrack,
@@ -772,10 +783,31 @@ class ConversionEngine(private val context: Context) {
                     axis = { it.y }
                 )
 
+                val baseWidth: String
+                val baseHeight: String
+
+                val targetRatio =
+                    settings.cropAspect.ratio
+
+                if (targetRatio == null) {
+                    baseWidth = "iw"
+                    baseHeight = "ih"
+                } else {
+                    val ratioText = String.format(
+                        Locale.US,
+                        "%.8f",
+                        targetRatio
+                    )
+                    baseWidth =
+                        "if(gt(iw/ih,$ratioText),trunc(ih*$ratioText/2)*2,iw)"
+                    baseHeight =
+                        "if(gt(iw/ih,$ratioText),ih,trunc(iw/$ratioText/2)*2)"
+                }
+
                 val cropWidth =
-                    "if(gt(iw/ih,$ratioText),trunc(ih*$ratioText/2)*2,iw)"
+                    "max(2,trunc(($baseWidth)/$zoomText/2)*2)"
                 val cropHeight =
-                    "if(gt(iw/ih,$ratioText),ih,trunc(iw/$ratioText/2)*2)"
+                    "max(2,trunc(($baseHeight)/$zoomText/2)*2)"
                 val cropX =
                     "max(0,min(iw-ow,iw*($focusXExpr)-ow/2))"
                 val cropY =
