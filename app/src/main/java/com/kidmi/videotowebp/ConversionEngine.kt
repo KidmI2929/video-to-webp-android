@@ -52,22 +52,27 @@ class ConversionEngine(private val context: Context) {
         cancelled.set(false)
 
         Thread {
-            var inputFile: File? = null
-            var outputFile: File? = null
+            var cleanupInput: File? = null
+            var cleanupOutput: File? = null
+
             try {
                 post { onStatus("영상 준비 중…") }
                 post { onProgress(0.02f) }
 
-                inputFile = copySourceToCache(sourceUri)
+                val inputFile = copySourceToCache(sourceUri)
+                cleanupInput = inputFile
+
                 if (cancelled.get()) {
+                    inputFile.delete()
                     post(onCancelled)
                     return@Thread
                 }
 
-                outputFile = File(
+                val outputFile = File(
                     context.cacheDir,
                     "webp_${System.currentTimeMillis()}.webp"
                 )
+                cleanupOutput = outputFile
 
                 val clipDurationMs = (settings.endMs - settings.startMs).coerceAtLeast(100L)
                 val clipDurationSeconds = clipDurationMs / 1000.0
@@ -111,12 +116,13 @@ class ConversionEngine(private val context: Context) {
                     command,
                     { completed ->
                         sessionId = null
+
                         try {
                             when {
                                 cancelled.get() || ReturnCode.isCancel(completed.returnCode) -> {
-                                    outputFile.delete()
                                     post(onCancelled)
                                 }
+
                                 ReturnCode.isSuccess(completed.returnCode) -> {
                                     if (!outputFile.exists() || outputFile.length() == 0L) {
                                         post { onError("변환 파일이 생성되지 않았습니다.") }
@@ -127,17 +133,23 @@ class ConversionEngine(private val context: Context) {
                                         post { onComplete(result) }
                                     }
                                 }
+
                                 else -> {
                                     val detail = completed.output
                                         ?.lineSequence()
+                                        ?.toList()
                                         ?.takeLast(6)
                                         ?.joinToString("\n")
                                         ?.take(900)
                                         .orEmpty()
+
                                     post {
                                         onError(
-                                            if (detail.isBlank()) "WebP 변환에 실패했습니다."
-                                            else "WebP 변환에 실패했습니다.\n$detail"
+                                            if (detail.isBlank()) {
+                                                "WebP 변환에 실패했습니다."
+                                            } else {
+                                                "WebP 변환에 실패했습니다.\n$detail"
+                                            }
                                         )
                                     }
                                 }
@@ -154,13 +166,17 @@ class ConversionEngine(private val context: Context) {
                         val processedMs = statistics.time.coerceAtLeast(0.0)
                         val fraction = (processedMs / clipDurationMs.toDouble())
                             .coerceIn(0.0, 1.0)
-                        post { onProgress((0.05 + fraction * 0.90).toFloat()) }
+                        post {
+                            onProgress((0.05 + fraction * 0.90).toFloat())
+                        }
                     }
                 )
+
                 sessionId = session.sessionId
             } catch (e: Exception) {
-                inputFile?.delete()
-                outputFile?.delete()
+                cleanupInput?.delete()
+                cleanupOutput?.delete()
+
                 if (cancelled.get()) {
                     post(onCancelled)
                 } else {
@@ -182,13 +198,19 @@ class ConversionEngine(private val context: Context) {
             .filter { it.isLetterOrDigit() }
             .take(8)
             .ifBlank { "mp4" }
-        val file = File(context.cacheDir, "source_${System.currentTimeMillis()}.$extension")
+
+        val file = File(
+            context.cacheDir,
+            "source_${System.currentTimeMillis()}.$extension"
+        )
+
         context.contentResolver.openInputStream(uri).use { input ->
             requireNotNull(input) { "선택한 영상을 열 수 없습니다." }
             FileOutputStream(file).use { output ->
                 input.copyTo(output, DEFAULT_BUFFER_SIZE)
             }
         }
+
         return file
     }
 
@@ -215,7 +237,9 @@ class ConversionEngine(private val context: Context) {
         try {
             resolver.openOutputStream(uri, "w").use { output ->
                 requireNotNull(output) { "갤러리 파일을 열 수 없습니다." }
-                file.inputStream().use { input -> input.copyTo(output) }
+                file.inputStream().use { input ->
+                    input.copyTo(output)
+                }
             }
 
             val done = ContentValues().apply {
@@ -223,7 +247,11 @@ class ConversionEngine(private val context: Context) {
             }
             resolver.update(uri, done, null, null)
 
-            return ConversionResult(uri, fileName, file.length())
+            return ConversionResult(
+                uri = uri,
+                fileName = fileName,
+                sizeBytes = file.length()
+            )
         } catch (e: Exception) {
             resolver.delete(uri, null, null)
             throw e
@@ -231,7 +259,11 @@ class ConversionEngine(private val context: Context) {
     }
 
     private fun quote(value: String): String {
-        return "'" + value.replace("'", "'\\''") + "'"
+        return "\"" +
+            value
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"") +
+            "\""
     }
 
     private fun post(block: () -> Unit) {
