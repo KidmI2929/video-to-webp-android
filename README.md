@@ -2,20 +2,22 @@
 
 휴대폰에서 영상을 선택해 **Animated WebP**로 변환하는 Android 앱입니다.
 
-## v0.4 속도 최적화
+## v0.5 속도 최적화
 
-v0.4는 Termux의 FFmpeg 처리 방식을 참고해 변환 구조를 바꿨습니다.
+v0.5는 Termux가 빠른 핵심 이유와 비슷하게, 변환을 네이티브 FFmpeg 파이프라인 안에서 처리합니다.
 
-- Bitmap을 한 장씩 추출/전달하던 v0.3 파이프라인 제거
-- FFmpeg 내부에서 **디코딩 → FPS 변환 → 스케일링 → libwebp 인코딩**을 한 번에 처리
-- Android SAF URI를 FFmpeg가 직접 읽고 써서 원본 영상의 앱 캐시 복사 제거
-- `-ss`를 입력 전에 적용해 구간 시작점 탐색 비용 절감
-- ARM64 네이티브 FFmpeg 사용
-- 빠름 / 균형 / 최대 압축 3단계 (기본값: 빠름)
-- 결과 화면에 실제 변환 소요 시간 표시
+- Bitmap 프레임 반복 추출 파이프라인 제거
+- FFmpeg 내부에서 **디코딩 → FPS 변환 → 스케일링 → libwebp 인코딩**을 연결
+- Android SAF URI를 FFmpeg가 직접 읽고/써서 원본 영상 전체 캐시 복사를 제거
+- 입력 전에 `-ss`를 적용해 구간 시작점 탐색 비용 절감
+- ARM64 / NEON 속도 최적화
+- MediaCodec 지원 포함
+- `libwebp`를 직접 활성화한 커스텀 FFmpegKit AAR 사용
+- 빠름 / 균형 / 최대 압축 3단계, 기본값은 **빠름**
+- 변환 소요 시간 표시
 
-Termux의 현재 ffmpeg 패키지도 Android에서 libwebp와 MediaCodec 등을 활성화한 네이티브 FFmpeg를 사용합니다.
-앱은 Termux 코드를 복사하지 않고 같은 핵심 구조인 네이티브 FFmpeg 파이프라인을 사용합니다.
+GitHub Actions는 FFmpegKit 소스에서 ARM64용 엔진을 직접 빌드하며,
+AAR과 최종 APK 양쪽에서 `--enable-libwebp`가 실제 포함됐는지 검사한 뒤에만 APK를 업로드합니다.
 
 ## 기능
 
@@ -35,11 +37,18 @@ Termux의 현재 ffmpeg 패키지도 Android에서 libwebp와 MediaCodec 등을 
 - Android 공유
 - 서버 업로드 없이 기기 내부 변환
 
-## 엔진
+## 커스텀 FFmpeg 빌드
 
-`dev.ffmpegkit-maintained:ffmpeg-kit-full:8.1.8`을 사용합니다.
-이 패키지의 full 빌드는 libwebp를 지원하며, 앱 시작 후 변환 시 실제 FFmpeg 빌드 설정에
-libwebp가 없으면 변환을 시작하지 않고 오류를 표시하도록 방어 코드도 포함했습니다.
+현재 빌드는 다음 핵심 옵션을 포함합니다.
+
+- `--enable-libwebp`
+- `--enable-mediacodec`
+- ARM64 `--enable-neon`
+- FFmpegKit `--speed` 빌드
+- Android API 29 대상
+
+Termux의 소스 코드를 앱에 복사한 것은 아닙니다. 공개된 Termux FFmpeg 빌드 설정을 참고해,
+FFmpeg/FFmpegKit/libwebp의 공개 소스로 독립적인 Android 네이티브 빌드를 생성합니다.
 
 ## 지원
 
@@ -48,5 +57,10 @@ libwebp가 없으면 변환을 시작하지 않고 오류를 표시하도록 방
 
 ## APK 받기
 
-GitHub **Actions → Build Android APK → 최신 성공 빌드 → Artifacts → VideoToWebP-debug-apk** 순서로 받습니다.
+GitHub **Actions → Build Android APK → 최신 성공 빌드 → Artifacts → VideoToWebP-v0.5-fast-apk** 순서로 받습니다.
 ZIP을 풀어 `app-debug.apk`를 설치하면 됩니다.
+
+## 오픈소스
+
+FFmpegKit/FFmpeg와 libwebp를 사용합니다. 자세한 출처와 라이선스 정보는
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)를 확인하세요.
