@@ -26,7 +26,7 @@ jobs:
           set -euxo pipefail
           SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort -V | tail -1)"
           yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
-          "$SDKMANAGER"             "platforms;android-35"             "build-tools;35.0.0"             "ndk;27.2.12479018"
+          "$SDKMANAGER"             "platforms;android-35" "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018"
 
       - name: Install native build tools
         shell: bash
@@ -84,7 +84,7 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.9'
+          gradle-version: '8.11.1'
 
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
@@ -106,7 +106,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: VideoToWebP-v0.5.1-crashfix-apk
+          name: VideoToWebP-v0.6-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
