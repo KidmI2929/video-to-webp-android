@@ -191,7 +191,7 @@ private fun VideoToWebPApp(
 ) {
     val context = LocalContext.current
     val engine = remember { ConversionEngine(context.applicationContext) }
-    val faceTracker = remember {
+    val subjectTracker = remember {
         FaceTrackingAnalyzer(context.applicationContext)
     }
     val prefs = remember {
@@ -284,9 +284,25 @@ private fun VideoToWebPApp(
         )
     }
 
-    var autoFaceTrack by remember {
+    var trackingMode by remember {
         mutableStateOf(
-            prefs.getBoolean("auto_face_track", false)
+            runCatching {
+                TrackingMode.valueOf(
+                    prefs.getString(
+                        "tracking_mode",
+                        null
+                    ) ?: if (
+                        prefs.getBoolean(
+                            "auto_face_track",
+                            false
+                        )
+                    ) {
+                        TrackingMode.FACE.name
+                    } else {
+                        TrackingMode.FIXED.name
+                    }
+                )
+            }.getOrDefault(TrackingMode.FIXED)
         )
     }
 
@@ -315,7 +331,7 @@ private fun VideoToWebPApp(
             } catch (_: Throwable) {
             }
 
-            faceTracker.cancel()
+            subjectTracker.cancel()
             engine.cancel()
             exoPlayer.pause()
             converting = false
@@ -371,7 +387,7 @@ private fun VideoToWebPApp(
         cropAspect,
         focusX,
         focusY,
-        autoFaceTrack
+        trackingMode
     ) {
         prefs.edit()
             .putInt("fps", fps)
@@ -386,7 +402,8 @@ private fun VideoToWebPApp(
             .putString("crop_aspect", cropAspect.name)
             .putFloat("focus_x", focusX)
             .putFloat("focus_y", focusY)
-            .putBoolean("auto_face_track", autoFaceTrack)
+            .putString("tracking_mode", trackingMode.name)
+            .remove("auto_face_track")
             .apply()
     }
 
@@ -445,7 +462,7 @@ private fun VideoToWebPApp(
 
     DisposableEffect(exoPlayer) {
         onDispose {
-            faceTracker.cancel()
+            subjectTracker.cancel()
             engine.cancel()
             exoPlayer.release()
         }
@@ -496,12 +513,12 @@ private fun VideoToWebPApp(
             (safeStart * 1000).roundToInt().toLong()
         val endMs =
             (safeEnd * 1000).roundToInt().toLong()
-        val shouldTrackFace =
-            autoFaceTrack &&
+        val shouldTrack =
+            trackingMode != TrackingMode.FIXED &&
                 cropAspect != CropAspect.ORIGINAL
 
         exoPlayer.pause()
-        faceTracker.cancel()
+        subjectTracker.cancel()
         engine.cancel()
         converting = true
         result = null
@@ -512,8 +529,11 @@ private fun VideoToWebPApp(
         fun runConversion(
             tracking: List<FocusKeyframe>
         ) {
-            val analysisWeight =
-                if (shouldTrackFace) 0.22f else 0f
+            val analysisWeight = when {
+                !shouldTrack -> 0f
+                trackingMode == TrackingMode.FACE -> 0.22f
+                else -> 0.30f
+            }
 
             engine.convert(
                 sourceUri = uri,
@@ -570,17 +590,18 @@ private fun VideoToWebPApp(
             )
         }
 
-        if (!shouldTrackFace) {
+        if (!shouldTrack) {
             runConversion(emptyList())
             return
         }
 
-        faceTracker.analyze(
+        subjectTracker.analyze(
             sourceUri = uri,
             startMs = startMs,
             endMs = endMs,
             initialFocusX = focusX,
             initialFocusY = focusY,
+            mode = trackingMode,
             onStatus = { status = it },
             onProgress = {
                 progress =
@@ -590,21 +611,27 @@ private fun VideoToWebPApp(
             onComplete = { points ->
                 if (points.isEmpty()) {
                     status =
-                        "얼굴을 찾지 못해 고정 포커스로 변환합니다."
+                        "추적 대상을 찾지 못해 고정 포커스로 변환합니다."
                     runConversion(emptyList())
                 } else {
+                    val label = when (trackingMode) {
+                        TrackingMode.FACE -> "얼굴"
+                        TrackingMode.UPPER_BODY -> "상체"
+                        TrackingMode.FULL_BODY -> "전신"
+                        TrackingMode.FIXED -> "고정"
+                    }
                     status =
-                        "얼굴 추적 " +
+                        label +
+                            " 추적 " +
                             points.size +
                             "개 지점 분석 완료"
                     runConversion(points)
                 }
             },
             onError = {
-                converting = false
-                progress = 0f
-                error = it
-                status = "얼굴 추적 분석 실패"
+                status =
+                    "추적 분석 실패 · 고정 포커스로 계속 변환합니다."
+                runConversion(emptyList())
             },
             onCancelled = {
                 converting = false
@@ -734,15 +761,15 @@ private fun VideoToWebPApp(
                     cropAspect = cropAspect,
                     focusX = focusX,
                     focusY = focusY,
-                    autoFaceTrack = autoFaceTrack,
+                    trackingMode = trackingMode,
                     enabled = !converting,
                     onCropAspectChange = { cropAspect = it },
                     onFocusChange = { x, y ->
                         focusX = x.coerceIn(0f, 1f)
                         focusY = y.coerceIn(0f, 1f)
                     },
-                    onAutoFaceTrackChange = {
-                        autoFaceTrack = it
+                    onTrackingModeChange = {
+                        trackingMode = it
                     }
                 )
 
@@ -773,7 +800,7 @@ private fun VideoToWebPApp(
                     status = status,
                     onConvert = { startConversion() },
                     onCancel = {
-                        faceTracker.cancel()
+                        subjectTracker.cancel()
                         engine.cancel()
                         status = "취소 요청 중…"
                     }
@@ -1444,15 +1471,15 @@ private fun FramingCard(
     cropAspect: CropAspect,
     focusX: Float,
     focusY: Float,
-    autoFaceTrack: Boolean,
+    trackingMode: TrackingMode,
     enabled: Boolean,
     onCropAspectChange: (CropAspect) -> Unit,
     onFocusChange: (Float, Float) -> Unit,
-    onAutoFaceTrackChange: (Boolean) -> Unit
+    onTrackingModeChange: (TrackingMode) -> Unit
 ) {
     SectionCard(
-        title = "화면비 · 크롭 · 포커스",
-        subtitle = "원하는 화면비로 자르고 선택한 지점을 화면 중심에 맞춤"
+        title = "화면비 · 크롭 · 인물 추적",
+        subtitle = "고정 포커스부터 얼굴·상체·전신 자동 추적까지"
     ) {
         Text(
             "출력 화면비",
@@ -1483,48 +1510,106 @@ private fun FramingCard(
             }
         }
 
-        SettingSwitch(
-            title = "얼굴 자동 추적 크롭",
-            description = if (cropAspect == CropAspect.ORIGINAL) {
-                "화면비를 먼저 선택하면 얼굴 추적 크롭을 사용할 수 있습니다."
-            } else if (autoFaceTrack) {
-                "변환 전 얼굴을 분석하고 같은 얼굴을 따라 크롭 중심을 움직입니다."
-            } else {
-                "끄면 아래의 고정 포커스 위치를 계속 사용합니다."
-            },
-            checked = autoFaceTrack,
-            enabled =
-                enabled &&
-                    cropAspect != CropAspect.ORIGINAL,
-            onCheckedChange = onAutoFaceTrackChange
+        Text(
+            "포커스 추적",
+            fontWeight = FontWeight.SemiBold
         )
 
-        if (
-            cropAspect != CropAspect.ORIGINAL &&
-            autoFaceTrack
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.primaryContainer
-            ) {
-                Text(
-                    "여러 얼굴이 있으면 플레이어에서 추적할 얼굴 근처를 먼저 탭하세요. " +
-                        "첫 분석 지점에서 가장 가까운 얼굴을 우선 선택하고, 이후 tracking ID와 위치로 이어서 추적합니다.",
-                    modifier = Modifier.padding(14.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer
+            items(
+                listOf(
+                    TrackingMode.FIXED to "고정",
+                    TrackingMode.FACE to "얼굴",
+                    TrackingMode.UPPER_BODY to "상체",
+                    TrackingMode.FULL_BODY to "전신"
+                )
+            ) { option ->
+                FilterChip(
+                    selected = trackingMode == option.first,
+                    onClick = {
+                        onTrackingModeChange(option.first)
+                    },
+                    enabled =
+                        enabled &&
+                            (
+                                option.first == TrackingMode.FIXED ||
+                                    cropAspect != CropAspect.ORIGINAL
+                                ),
+                    label = { Text(option.second) }
                 )
             }
         }
 
-        if (cropAspect == CropAspect.ORIGINAL) {
-            Text(
-                "원본 화면비에서는 크롭하지 않습니다. 화면비를 선택하면 포커스 기능이 활성화됩니다.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        } else {
+        when {
+            cropAspect == CropAspect.ORIGINAL -> {
+                Text(
+                    "원본 화면비에서는 크롭할 영역이 없어 자동 추적이 적용되지 않습니다. " +
+                        "1:1, 4:5, 9:16 같은 화면비를 먼저 선택하세요.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            trackingMode == TrackingMode.FACE -> {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer
+                ) {
+                    Text(
+                        "얼굴 모드: 여러 얼굴이 있으면 플레이어에서 원하는 얼굴 근처를 먼저 탭하세요. " +
+                            "첫 얼굴을 선택한 뒤 tracking ID와 위치를 이용해 같은 얼굴을 이어서 추적합니다.",
+                        modifier = Modifier.padding(14.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+            }
+
+            trackingMode == TrackingMode.UPPER_BODY -> {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer
+                ) {
+                    Text(
+                        "상체 모드: 머리·어깨·팔·골반 포즈를 분석해 인물 상체의 중심을 따라갑니다. " +
+                            "포즈가 잠깐 사라지면 직전 위치를 유지하고 얼굴 위치로 보조합니다.",
+                        modifier = Modifier.padding(14.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+            }
+
+            trackingMode == TrackingMode.FULL_BODY -> {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer
+                ) {
+                    Text(
+                        "전신 모드: 머리부터 발목·발까지 포즈 랜드마크를 사용해 전신 중심을 추적합니다. " +
+                            "여러 사람이 나오면 포즈 모델이 가장 두드러진 인물을 우선 추적합니다.",
+                        modifier = Modifier.padding(14.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+            }
+
+            else -> {
+                Text(
+                    "고정 모드에서는 아래 위치를 영상 전체에 그대로 사용합니다.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        if (cropAspect != CropAspect.ORIGINAL) {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
@@ -1535,7 +1620,7 @@ private fun FramingCard(
                     verticalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     Text(
-                        "포커스 X " +
+                        "기준 포커스 X " +
                             (focusX * 100).roundToInt() +
                             "% · Y " +
                             (focusY * 100).roundToInt() +
@@ -1543,7 +1628,11 @@ private fun FramingCard(
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        "영상 화면을 직접 탭하면 그 지점이 크롭 중심이 됩니다.",
+                        if (trackingMode == TrackingMode.FIXED) {
+                            "영상 화면을 탭하면 실제 크롭 중심이 바뀝니다."
+                        } else {
+                            "영상 화면 탭 위치는 추적 시작점과 추적 실패 시 fallback 기준으로 사용합니다."
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1551,7 +1640,7 @@ private fun FramingCard(
             }
 
             Text(
-                "빠른 포커스",
+                "빠른 기준 위치",
                 fontWeight = FontWeight.SemiBold
             )
 
@@ -1568,8 +1657,12 @@ private fun FramingCard(
                 ) { preset ->
                     FilterChip(
                         selected =
-                            kotlin.math.abs(focusX - preset.second) < 0.02f &&
-                                kotlin.math.abs(focusY - preset.third) < 0.02f,
+                            kotlin.math.abs(
+                                focusX - preset.second
+                            ) < 0.02f &&
+                                kotlin.math.abs(
+                                    focusY - preset.third
+                                ) < 0.02f,
                         onClick = {
                             onFocusChange(
                                 preset.second,
@@ -1584,7 +1677,8 @@ private fun FramingCard(
         }
 
         Text(
-            "화면비·고정 포커스·얼굴 자동 추적 설정도 현재 프리셋에 자동 저장됩니다.",
+            "추적 모드·화면비·기준 포커스까지 자동 저장됩니다. " +
+                "자동 추적은 변환 직전에 기기 내부에서 분석되며 인터넷 업로드를 사용하지 않습니다.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.primary
         )
