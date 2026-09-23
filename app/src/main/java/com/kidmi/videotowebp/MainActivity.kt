@@ -1639,6 +1639,7 @@ private fun CompactFocusPreview(
     cropAspect: CropAspect,
     focusX: Float,
     focusY: Float,
+    cropZoom: Float,
     converting: Boolean,
     onFocusChange: (Float, Float) -> Unit
 ) {
@@ -1693,7 +1694,10 @@ private fun CompactFocusPreview(
                         ) {
                             if (
                                 !converting &&
-                                cropAspect != CropAspect.ORIGINAL
+                                (
+                                    cropAspect != CropAspect.ORIGINAL ||
+                                        cropZoom > 1.001f
+                                    )
                             ) {
                                 detectTapGestures { offset ->
                                     val width =
@@ -1712,21 +1716,42 @@ private fun CompactFocusPreview(
                             }
                         }
                 ) {
-                    cropAspect.ratio?.let { targetRatio ->
-                        val ratio = targetRatio.toFloat()
-                        val canvasRatio =
-                            size.width / size.height
+                    val hasCrop =
+                        cropAspect != CropAspect.ORIGINAL ||
+                            cropZoom > 1.001f
 
-                        val cropWidth: Float
-                        val cropHeight: Float
+                    if (hasCrop) {
+                        val zoom =
+                            cropZoom.coerceIn(1f, 4f)
+                        val targetRatio =
+                            cropAspect.ratio
+                                ?.toFloat()
 
-                        if (canvasRatio > ratio) {
-                            cropHeight = size.height
-                            cropWidth = cropHeight * ratio
+                        val baseWidth: Float
+                        val baseHeight: Float
+
+                        if (targetRatio == null) {
+                            baseWidth = size.width
+                            baseHeight = size.height
                         } else {
-                            cropWidth = size.width
-                            cropHeight = cropWidth / ratio
+                            val canvasRatio =
+                                size.width / size.height
+
+                            if (canvasRatio > targetRatio) {
+                                baseHeight = size.height
+                                baseWidth =
+                                    baseHeight * targetRatio
+                            } else {
+                                baseWidth = size.width
+                                baseHeight =
+                                    baseWidth / targetRatio
+                            }
                         }
+
+                        val cropWidth =
+                            baseWidth / zoom
+                        val cropHeight =
+                            baseHeight / zoom
 
                         val centerX =
                             focusX.coerceIn(0f, 1f) *
@@ -1766,23 +1791,74 @@ private fun CompactFocusPreview(
                                 width = 3.dp.toPx()
                             )
                         )
+                    }
 
+                    if (trackingPath.size >= 2) {
+                        trackingPath.zipWithNext()
+                            .forEach { pair ->
+                                val a = pair.first
+                                val b = pair.second
+
+                                drawLine(
+                                    color =
+                                        markerColor.copy(
+                                            alpha = 0.72f
+                                        ),
+                                    start =
+                                        androidx.compose.ui.geometry.Offset(
+                                            a.x.coerceIn(0f, 1f) *
+                                                size.width,
+                                            a.y.coerceIn(0f, 1f) *
+                                                size.height
+                                        ),
+                                    end =
+                                        androidx.compose.ui.geometry.Offset(
+                                            b.x.coerceIn(0f, 1f) *
+                                                size.width,
+                                            b.y.coerceIn(0f, 1f) *
+                                                size.height
+                                        ),
+                                    strokeWidth = 3.dp.toPx()
+                                )
+                            }
+                    }
+
+                    manualKeyframes.forEach { point ->
                         drawCircle(
-                            color = markerColor,
-                            radius = 7.dp.toPx(),
+                            color = Color(0xFFFFC857),
+                            radius = 6.dp.toPx(),
                             center =
                                 androidx.compose.ui.geometry.Offset(
-                                    centerX,
-                                    centerY
+                                    point.x.coerceIn(0f, 1f) *
+                                        size.width,
+                                    point.y.coerceIn(0f, 1f) *
+                                        size.height
                                 )
                         )
                     }
+
+                    drawCircle(
+                        color = markerColor,
+                        radius = 7.dp.toPx(),
+                        center =
+                            androidx.compose.ui.geometry.Offset(
+                                focusX.coerceIn(0f, 1f) *
+                                    size.width,
+                                focusY.coerceIn(0f, 1f) *
+                                    size.height
+                            )
+                    )
                 }
             }
 
             Text(
-                if (cropAspect == CropAspect.ORIGINAL) {
-                    "크롭 화면비를 선택하면 탭 포커스를 미리 볼 수 있습니다."
+                if (
+                    cropAspect == CropAspect.ORIGINAL &&
+                    cropZoom <= 1.001f
+                ) {
+                    "화면비를 바꾸거나 확대하면 크롭 영역이 표시됩니다."
+                } else if (trackingPath.isNotEmpty()) {
+                    "추적 경로를 선으로 표시 중 · 노란 점은 수동 키프레임"
                 } else {
                     "추적할 기준 위치를 영상에서 직접 탭하세요."
                 },
@@ -1915,8 +1991,12 @@ private fun PlayerSection(
                             cropAspect,
                             converting
                         ) {
-                            if (!converting &&
-                                cropAspect != CropAspect.ORIGINAL
+                            if (
+                                !converting &&
+                                (
+                                    cropAspect != CropAspect.ORIGINAL ||
+                                        cropZoom > 1.001f
+                                    )
                             ) {
                                 detectTapGestures { offset ->
                                     val width = size.width
@@ -1936,21 +2016,42 @@ private fun PlayerSection(
                             }
                         }
                 ) {
-                    cropAspect.ratio?.let { targetRatio ->
-                        val ratio = targetRatio.toFloat()
-                        val canvasRatio =
-                            size.width / size.height
+                    val hasCrop =
+                        cropAspect != CropAspect.ORIGINAL ||
+                            cropZoom > 1.001f
 
-                        val cropWidth: Float
-                        val cropHeight: Float
+                    if (hasCrop) {
+                        val zoom =
+                            cropZoom.coerceIn(1f, 4f)
+                        val targetRatio =
+                            cropAspect.ratio
+                                ?.toFloat()
 
-                        if (canvasRatio > ratio) {
-                            cropHeight = size.height
-                            cropWidth = cropHeight * ratio
+                        val baseWidth: Float
+                        val baseHeight: Float
+
+                        if (targetRatio == null) {
+                            baseWidth = size.width
+                            baseHeight = size.height
                         } else {
-                            cropWidth = size.width
-                            cropHeight = cropWidth / ratio
+                            val canvasRatio =
+                                size.width / size.height
+
+                            if (canvasRatio > targetRatio) {
+                                baseHeight = size.height
+                                baseWidth =
+                                    baseHeight * targetRatio
+                            } else {
+                                baseWidth = size.width
+                                baseHeight =
+                                    baseWidth / targetRatio
+                            }
                         }
+
+                        val cropWidth =
+                            baseWidth / zoom
+                        val cropHeight =
+                            baseHeight / zoom
 
                         val centerX =
                             focusX.coerceIn(0f, 1f) *
@@ -1959,41 +2060,46 @@ private fun PlayerSection(
                             focusY.coerceIn(0f, 1f) *
                                 size.height
 
-                        val left = (
-                            centerX - cropWidth / 2f
-                            ).coerceIn(
-                            0f,
-                            (size.width - cropWidth)
-                                .coerceAtLeast(0f)
-                        )
-                        val top = (
-                            centerY - cropHeight / 2f
-                            ).coerceIn(
-                            0f,
-                            (size.height - cropHeight)
-                                .coerceAtLeast(0f)
-                        )
+                        val left =
+                            (centerX - cropWidth / 2f)
+                                .coerceIn(
+                                    0f,
+                                    (size.width - cropWidth)
+                                        .coerceAtLeast(0f)
+                                )
+                        val top =
+                            (centerY - cropHeight / 2f)
+                                .coerceIn(
+                                    0f,
+                                    (size.height - cropHeight)
+                                        .coerceAtLeast(0f)
+                                )
 
                         drawRect(
                             color = Color.White,
-                            topLeft = androidx.compose.ui.geometry.Offset(
-                                left,
-                                top
-                            ),
-                            size = androidx.compose.ui.geometry.Size(
-                                cropWidth,
-                                cropHeight
-                            ),
-                            style = Stroke(width = 3.dp.toPx())
+                            topLeft =
+                                androidx.compose.ui.geometry.Offset(
+                                    left,
+                                    top
+                                ),
+                            size =
+                                androidx.compose.ui.geometry.Size(
+                                    cropWidth,
+                                    cropHeight
+                                ),
+                            style = Stroke(
+                                width = 3.dp.toPx()
+                            )
                         )
 
                         drawCircle(
                             color = focusMarkerColor,
                             radius = 7.dp.toPx(),
-                            center = androidx.compose.ui.geometry.Offset(
-                                centerX,
-                                centerY
-                            )
+                            center =
+                                androidx.compose.ui.geometry.Offset(
+                                    centerX,
+                                    centerY
+                                )
                         )
                     }
                 }
@@ -2362,10 +2468,13 @@ private fun FramingCard(
     cropAspect: CropAspect,
     focusX: Float,
     focusY: Float,
+    cropZoom: Float,
     trackingMode: TrackingMode,
     enabled: Boolean,
     onCropAspectChange: (CropAspect) -> Unit,
     onFocusChange: (Float, Float) -> Unit,
+    onCropZoomChange: (Float) -> Unit,
+    onResetCrop: () -> Unit,
     onTrackingModeChange: (TrackingMode) -> Unit
 ) {
     SectionCard(
@@ -2401,6 +2510,67 @@ private fun FramingCard(
             }
         }
 
+        SliderSetting(
+            title = "크롭 확대",
+            valueText =
+                String.format(
+                    java.util.Locale.US,
+                    "%.2fx",
+                    cropZoom
+                ),
+            value = cropZoom,
+            range = 1f..4f,
+            steps = 29,
+            enabled = enabled,
+            onValue = onCropZoomChange
+        )
+
+        SliderSetting(
+            title = "가로 위치",
+            valueText =
+                (focusX * 100)
+                    .roundToInt()
+                    .toString() +
+                    "%",
+            value = focusX,
+            range = 0f..1f,
+            steps = 99,
+            enabled = enabled,
+            onValue = {
+                onFocusChange(
+                    it,
+                    focusY
+                )
+            }
+        )
+
+        SliderSetting(
+            title = "세로 위치",
+            valueText =
+                (focusY * 100)
+                    .roundToInt()
+                    .toString() +
+                    "%",
+            value = focusY,
+            range = 0f..1f,
+            steps = 99,
+            enabled = enabled,
+            onValue = {
+                onFocusChange(
+                    focusX,
+                    it
+                )
+            }
+        )
+
+        OutlinedButton(
+            onClick = onResetCrop,
+            enabled = enabled,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("크롭 위치·확대 초기화")
+        }
+
         Text(
             "포커스 추적",
             fontWeight = FontWeight.SemiBold
@@ -2426,7 +2596,8 @@ private fun FramingCard(
                         enabled &&
                             (
                                 option.first == TrackingMode.FIXED ||
-                                    cropAspect != CropAspect.ORIGINAL
+                                    cropAspect != CropAspect.ORIGINAL ||
+                                    cropZoom > 1.001f
                                 ),
                     label = { Text(option.second) }
                 )
@@ -2434,10 +2605,11 @@ private fun FramingCard(
         }
 
         when {
-            cropAspect == CropAspect.ORIGINAL -> {
+            cropAspect == CropAspect.ORIGINAL &&
+                cropZoom <= 1.001f -> {
                 Text(
-                    "원본 화면비에서는 크롭할 영역이 없어 자동 추적이 적용되지 않습니다. " +
-                        "1:1, 4:5, 9:16 같은 화면비를 먼저 선택하세요.",
+                    "현재는 원본 화면 그대로입니다. 화면비를 바꾸거나 크롭 확대를 1.0x보다 높이면 " +
+                        "세밀 위치 조절과 자동 추적이 활성화됩니다.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -2500,7 +2672,10 @@ private fun FramingCard(
             }
         }
 
-        if (cropAspect != CropAspect.ORIGINAL) {
+        if (
+            cropAspect != CropAspect.ORIGINAL ||
+            cropZoom > 1.001f
+        ) {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
