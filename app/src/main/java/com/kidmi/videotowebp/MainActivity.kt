@@ -1146,7 +1146,10 @@ private fun VideoToWebPApp(
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
             Column {
-                if (videoInfo != null) {
+                if (
+                    videoInfo != null ||
+                    batchUris.isNotEmpty()
+                ) {
                     CompactConversionBar(
                         converting = converting,
                         progress = progress,
@@ -1888,6 +1891,7 @@ private fun CompactConversionBar(
     progress: Float,
     status: String,
     enabled: Boolean,
+    actionLabel: String,
     onConvert: () -> Unit,
     onCancel: () -> Unit
 ) {
@@ -1939,7 +1943,7 @@ private fun CompactConversionBar(
                         .height(50.dp)
                 ) {
                     Text(
-                        "Animated WebP 만들기",
+                        actionLabel,
                         fontWeight = FontWeight.Bold
                     )
                 }
@@ -3539,6 +3543,134 @@ private fun StorageCard(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun BatchQueueCard(
+    queue: List<Uri>,
+    enabled: Boolean,
+    onChoose: () -> Unit,
+    onClear: () -> Unit
+) {
+    val context = LocalContext.current
+
+    val names = remember(queue) {
+        queue.mapIndexed { index, uri ->
+            queryDisplayName(
+                context,
+                uri
+            ) ?: "영상 " + (index + 1)
+        }
+    }
+
+    SectionCard(
+        title = "배치 변환 큐",
+        subtitle = "여러 영상을 같은 출력/크롭/추적 프리셋으로 순차 처리"
+    ) {
+        if (queue.isEmpty()) {
+            Text(
+                "배치 큐가 비어 있습니다. 선택하면 각 영상의 전체 구간을 순서대로 변환합니다.",
+                style = MaterialTheme.typography.bodySmall,
+                color =
+                    MaterialTheme
+                        .colorScheme
+                        .onSurfaceVariant
+            )
+        } else {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                color =
+                    MaterialTheme
+                        .colorScheme
+                        .primaryContainer
+            ) {
+                Text(
+                    queue.size.toString() +
+                        "개 영상 대기 중",
+                    modifier =
+                        Modifier.padding(12.dp),
+                    fontWeight =
+                        FontWeight.Bold,
+                    color =
+                        MaterialTheme
+                            .colorScheme
+                            .onPrimaryContainer
+                )
+            }
+
+            LazyRow(
+                horizontalArrangement =
+                    Arrangement.spacedBy(8.dp)
+            ) {
+                items(
+                    names
+                ) { name ->
+                    Surface(
+                        shape =
+                            RoundedCornerShape(
+                                12.dp
+                            ),
+                        color =
+                            MaterialTheme
+                                .colorScheme
+                                .surfaceVariant
+                    ) {
+                        Text(
+                            name,
+                            modifier =
+                                Modifier.padding(
+                                    horizontal =
+                                        10.dp,
+                                    vertical =
+                                        7.dp
+                                ),
+                            maxLines = 1,
+                            overflow =
+                                TextOverflow
+                                    .Ellipsis,
+                            style =
+                                MaterialTheme
+                                    .typography
+                                    .labelMedium
+                        )
+                    }
+                }
+            }
+        }
+
+        Button(
+            onClick = onChoose,
+            enabled = enabled,
+            modifier =
+                Modifier.fillMaxWidth()
+        ) {
+            Text(
+                if (queue.isEmpty()) {
+                    "여러 영상 선택"
+                } else {
+                    "배치 영상 다시 선택"
+                }
+            )
+        }
+
+        if (queue.isNotEmpty()) {
+            OutlinedButton(
+                onClick = onClear,
+                enabled = enabled,
+                modifier =
+                    Modifier.fillMaxWidth()
+            ) {
+                Text("배치 큐 비우기")
+            }
+        }
+
+        Text(
+            "배치 변환은 각 영상 전체 구간을 사용합니다. 출력/크롭/추적/목표 용량 설정은 모든 영상에 동일하게 적용됩니다.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 
