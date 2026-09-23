@@ -130,7 +130,7 @@ fun VideoToWebPApp() {
     val context = LocalContext.current
     val engine = remember { ConversionEngine(context.applicationContext) }
     val prefs = remember {
-        context.getSharedPreferences("video_to_webp", ComponentActivity.MODE_PRIVATE)
+        context.getSharedPreferences("video_to_webp", android.content.Context.MODE_PRIVATE)
     }
     val exoPlayer = remember {
         ExoPlayer.Builder(context).build().apply {
