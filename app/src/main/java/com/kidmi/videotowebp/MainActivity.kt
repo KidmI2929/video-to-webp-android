@@ -287,6 +287,51 @@ private fun VideoToWebPApp(
         )
     }
 
+    var cropZoom by remember {
+        mutableFloatStateOf(
+            prefs.getFloat("crop_zoom", 1f)
+                .coerceIn(1f, 4f)
+        )
+    }
+
+    var targetTotalSizeEnabled by remember {
+        mutableStateOf(
+            prefs.getBoolean(
+                "target_total_enabled",
+                false
+            )
+        )
+    }
+
+    var targetTotalSizeMb by remember {
+        mutableIntStateOf(
+            prefs.getInt(
+                "target_total_mb",
+                8
+            ).coerceIn(1, 100)
+        )
+    }
+
+    var manualKeyframes by remember {
+        mutableStateOf<List<FocusKeyframe>>(
+            emptyList()
+        )
+    }
+
+    var previewTrack by remember {
+        mutableStateOf<List<FocusKeyframe>>(
+            emptyList()
+        )
+    }
+
+    var trackingPreviewBusy by remember {
+        mutableStateOf(false)
+    }
+
+    var trackingPreviewProgress by remember {
+        mutableFloatStateOf(0f)
+    }
+
     var trackingMode by remember {
         mutableStateOf(
             runCatching {
@@ -346,6 +391,10 @@ private fun VideoToWebPApp(
             selectedResultPart = 0
             selectedTab = 0
             videoInfo = null
+            manualKeyframes = emptyList()
+            previewTrack = emptyList()
+            trackingPreviewBusy = false
+            trackingPreviewProgress = 0f
             videoUri = uri
             currentPositionMs = 0L
         }
@@ -394,6 +443,9 @@ private fun VideoToWebPApp(
         cropAspect,
         focusX,
         focusY,
+        cropZoom,
+        targetTotalSizeEnabled,
+        targetTotalSizeMb,
         trackingMode
     ) {
         prefs.edit()
@@ -409,6 +461,15 @@ private fun VideoToWebPApp(
             .putString("crop_aspect", cropAspect.name)
             .putFloat("focus_x", focusX)
             .putFloat("focus_y", focusY)
+            .putFloat("crop_zoom", cropZoom)
+            .putBoolean(
+                "target_total_enabled",
+                targetTotalSizeEnabled
+            )
+            .putInt(
+                "target_total_mb",
+                targetTotalSizeMb
+            )
             .putString("tracking_mode", trackingMode.name)
             .remove("auto_face_track")
             .apply()
@@ -443,6 +504,16 @@ private fun VideoToWebPApp(
         } finally {
             metadataLoading = false
         }
+    }
+
+    LaunchedEffect(
+        videoUri,
+        trackingMode,
+        startSec,
+        endSec
+    ) {
+        previewTrack = emptyList()
+        trackingPreviewProgress = 0f
     }
 
     LaunchedEffect(exoPlayer, videoUri, startSec, endSec) {
@@ -522,7 +593,10 @@ private fun VideoToWebPApp(
             (safeEnd * 1000).roundToInt().toLong()
         val shouldTrack =
             trackingMode != TrackingMode.FIXED &&
-                cropAspect != CropAspect.ORIGINAL
+                (
+                    cropAspect != CropAspect.ORIGINAL ||
+                        cropZoom > 1.001f
+                    )
 
         exoPlayer.pause()
         subjectTracker.cancel()
@@ -536,6 +610,13 @@ private fun VideoToWebPApp(
         fun runConversion(
             tracking: List<FocusKeyframe>
         ) {
+            val mergedTracking =
+                mergeTrackingKeyframes(
+                    automatic = tracking,
+                    manual = manualKeyframes,
+                    startMs = startMs,
+                    endMs = endMs
+                )
             val analysisWeight = when {
                 !shouldTrack -> 0f
                 trackingMode == TrackingMode.FACE -> 0.22f
@@ -557,10 +638,21 @@ private fun VideoToWebPApp(
                     splitMode = splitMode,
                     splitCount = splitCount,
                     targetPartSizeMb = targetPartSizeMb,
+                    targetTotalSizeMb =
+                        if (
+                            targetTotalSizeEnabled &&
+                            splitMode == SplitMode.NONE &&
+                            !lossless
+                        ) {
+                            targetTotalSizeMb
+                        } else {
+                            null
+                        },
                     cropAspect = cropAspect,
                     focusX = focusX,
                     focusY = focusY,
-                    focusTrack = tracking
+                    cropZoom = cropZoom,
+                    focusTrack = mergedTracking
                 ),
                 onStatus = { status = it },
                 onProgress = {
@@ -603,6 +695,12 @@ private fun VideoToWebPApp(
             return
         }
 
+        if (previewTrack.isNotEmpty()) {
+            status = "미리 분석한 추적 경로를 사용합니다."
+            runConversion(previewTrack)
+            return
+        }
+
         subjectTracker.analyze(
             sourceUri = uri,
             startMs = startMs,
@@ -617,6 +715,7 @@ private fun VideoToWebPApp(
                         .coerceIn(0f, 0.22f)
             },
             onComplete = { points ->
+                previewTrack = points
                 if (points.isEmpty()) {
                     status =
                         "추적 대상을 찾지 못해 고정 포커스로 변환합니다."
