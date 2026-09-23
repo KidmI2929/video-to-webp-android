@@ -2424,42 +2424,77 @@ private fun OutputSettingsCard(
             onValue = { onQualityChange(it.roundToInt()) }
         )
 
-        Text("변환 프리셋", fontWeight = FontWeight.SemiBold)
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            items(
-                listOf(
-                    ConversionSpeed.TURBO to "터보",
-                    ConversionSpeed.FAST to "빠름",
-                    ConversionSpeed.BALANCED to "균형",
-                    ConversionSpeed.MAX_COMPRESSION to "최대 압축"
-                )
-            ) { option ->
-                FilterChip(
-                    selected = speed == option.first,
-                    onClick = { onSpeedChange(option.first) },
-                    enabled = enabled,
-                    label = { Text(option.second) }
-                )
-            }
+        var advanced by rememberSaveable {
+            mutableStateOf(false)
         }
 
-        SettingSwitch(
-            title = "무손실 WebP",
-            description = "최대 화질. 파일 크기는 크게 증가할 수 있습니다.",
-            checked = lossless,
-            enabled = enabled,
-            onCheckedChange = onLosslessChange
-        )
+        FilledTonalButton(
+            onClick = {
+                advanced = !advanced
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                if (advanced) {
+                    "고급 설정 접기"
+                } else {
+                    "고급 설정 펼치기"
+                }
+            )
+        }
 
-        SettingSwitch(
-            title = "무한 반복",
-            description = "Animated WebP를 계속 반복 재생합니다.",
-            checked = loopForever,
-            enabled = enabled,
-            onCheckedChange = onLoopChange
-        )
+        if (advanced) {
+            Text(
+                "변환 프리셋",
+                fontWeight = FontWeight.SemiBold
+            )
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(
+                    listOf(
+                        ConversionSpeed.TURBO to "터보",
+                        ConversionSpeed.FAST to "빠름",
+                        ConversionSpeed.BALANCED to "균형",
+                        ConversionSpeed.MAX_COMPRESSION to "최대 압축"
+                    )
+                ) { option ->
+                    FilterChip(
+                        selected =
+                            speed == option.first,
+                        onClick = {
+                            onSpeedChange(
+                                option.first
+                            )
+                        },
+                        enabled = enabled,
+                        label = {
+                            Text(option.second)
+                        }
+                    )
+                }
+            }
+
+            SettingSwitch(
+                title = "무손실 WebP",
+                description =
+                    "최대 화질. 파일 크기는 크게 증가할 수 있습니다.",
+                checked = lossless,
+                enabled = enabled,
+                onCheckedChange =
+                    onLosslessChange
+            )
+
+            SettingSwitch(
+                title = "무한 반복",
+                description =
+                    "Animated WebP를 계속 반복 재생합니다.",
+                checked = loopForever,
+                enabled = enabled,
+                onCheckedChange =
+                    onLoopChange
+            )
+        }
     }
 }
 
@@ -2748,6 +2783,353 @@ private fun FramingCard(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.primary
         )
+    }
+}
+
+@Composable
+private fun TrackingEditorCard(
+    currentPositionMs: Long,
+    focusX: Float,
+    focusY: Float,
+    automaticPoints: List<FocusKeyframe>,
+    manualPoints: List<FocusKeyframe>,
+    analyzing: Boolean,
+    analysisProgress: Float,
+    enabled: Boolean,
+    onAnalyze: () -> Unit,
+    onAddManual: () -> Unit,
+    onRemoveManual: (FocusKeyframe) -> Unit,
+    onClear: () -> Unit,
+    onSeek: (Long) -> Unit
+) {
+    SectionCard(
+        title = "추적 경로 편집",
+        subtitle = "자동 경로를 먼저 확인하고 필요한 시점만 수동으로 보정"
+    ) {
+        if (analyzing) {
+            LinearProgressIndicator(
+                progress = {
+                    analysisProgress
+                        .coerceIn(0f, 1f)
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Text(
+                "추적 경로 분석 중 · " +
+                    (analysisProgress * 100)
+                        .roundToInt() +
+                    "%",
+                style = MaterialTheme.typography.bodySmall
+            )
+        } else {
+            Button(
+                onClick = onAnalyze,
+                enabled = enabled,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    if (automaticPoints.isEmpty()) {
+                        "추적 경로 미리 분석"
+                    } else {
+                        "추적 경로 다시 분석"
+                    }
+                )
+            }
+        }
+
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant
+        ) {
+            Text(
+                "자동 " +
+                    automaticPoints.size +
+                    "점 · 수동 " +
+                    manualPoints.size +
+                    "점",
+                modifier = Modifier.padding(12.dp),
+                style = MaterialTheme.typography.labelLarge
+            )
+        }
+
+        FilledTonalButton(
+            onClick = onAddManual,
+            enabled = enabled,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                "현재 " +
+                    formatDetailedTime(
+                        currentPositionMs
+                    ) +
+                    " 위치를 수동 키프레임으로 추가"
+            )
+        }
+
+        Text(
+            "현재 포커스 X " +
+                (focusX * 100)
+                    .roundToInt() +
+                "% · Y " +
+                (focusY * 100)
+                    .roundToInt() +
+                "%",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        if (manualPoints.isNotEmpty()) {
+            LazyRow(
+                horizontalArrangement =
+                    Arrangement.spacedBy(8.dp)
+            ) {
+                items(
+                    manualPoints,
+                    key = {
+                        it.timeMs
+                    }
+                ) { point ->
+                    Surface(
+                        shape =
+                            RoundedCornerShape(
+                                14.dp
+                            ),
+                        color =
+                            MaterialTheme
+                                .colorScheme
+                                .secondaryContainer
+                    ) {
+                        Column(
+                            modifier =
+                                Modifier.padding(
+                                    10.dp
+                                ),
+                            horizontalAlignment =
+                                Alignment.CenterHorizontally,
+                            verticalArrangement =
+                                Arrangement.spacedBy(
+                                    4.dp
+                                )
+                        ) {
+                            TextButton(
+                                onClick = {
+                                    onSeek(
+                                        point.timeMs
+                                    )
+                                }
+                            ) {
+                                Text(
+                                    formatDetailedTime(
+                                        point.timeMs
+                                    )
+                                )
+                            }
+                            TextButton(
+                                onClick = {
+                                    onRemoveManual(
+                                        point
+                                    )
+                                }
+                            ) {
+                                Text("삭제")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (
+            automaticPoints.isNotEmpty() ||
+            manualPoints.isNotEmpty()
+        ) {
+            OutlinedButton(
+                onClick = onClear,
+                enabled = enabled,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("추적 경로/수동 보정 초기화")
+            }
+        }
+
+        Text(
+            "수동 키프레임 주변 약 0.45초는 자동 추적보다 수동 위치를 우선합니다.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.primary
+        )
+    }
+}
+
+@Composable
+private fun EstimateTargetCard(
+    info: VideoInfo,
+    durationMs: Long,
+    fps: Int,
+    quality: Int,
+    maxSide: Int?,
+    lossless: Boolean,
+    cropZoom: Float,
+    speed: ConversionSpeed,
+    splitMode: SplitMode,
+    enabled: Boolean,
+    targetEnabled: Boolean,
+    targetMb: Int,
+    onTargetEnabledChange: (Boolean) -> Unit,
+    onTargetMbChange: (Int) -> Unit,
+    onApplyRecommendedQuality: (Int) -> Unit
+) {
+    val estimate = estimateOutput(
+        info = info,
+        durationMs = durationMs,
+        fps = fps,
+        quality = quality,
+        maxSide = maxSide,
+        lossless = lossless,
+        cropZoom = cropZoom,
+        speed = speed
+    )
+
+    val targetBytes =
+        targetMb.coerceIn(1, 100) *
+            1024L *
+            1024L
+
+    val recommendation =
+        recommendedQualityForTarget(
+            estimateAtCurrentQuality =
+                estimate.sizeBytes,
+            currentQuality = quality,
+            targetBytes = targetBytes
+        )
+
+    SectionCard(
+        title = "예상치 · 목표 전체 용량",
+        subtitle = "변환 전 대략적인 크기/시간을 보고 전체 파일 크기도 자동 조정"
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant
+        ) {
+            Row(
+                modifier = Modifier.padding(14.dp),
+                horizontalArrangement =
+                    Arrangement.SpaceBetween
+            ) {
+                Column {
+                    Text(
+                        "예상 크기",
+                        style =
+                            MaterialTheme
+                                .typography
+                                .labelMedium
+                    )
+                    Text(
+                        formatBytes(
+                            estimate.sizeBytes
+                        ),
+                        fontWeight =
+                            FontWeight.Bold
+                    )
+                }
+                Column(
+                    horizontalAlignment =
+                        Alignment.End
+                ) {
+                    Text(
+                        "예상 변환 시간",
+                        style =
+                            MaterialTheme
+                                .typography
+                                .labelMedium
+                    )
+                    Text(
+                        "~" +
+                            String.format(
+                                java.util.Locale.US,
+                                "%.1f초",
+                                estimate.seconds
+                            ),
+                        fontWeight =
+                            FontWeight.Bold
+                    )
+                }
+            }
+        }
+
+        Text(
+            "예상치는 영상 내용과 기기 성능에 따라 실제 결과와 차이가 날 수 있습니다.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        SettingSwitch(
+            title = "목표 전체 용량 자동 맞춤",
+            description =
+                "완성 WebP를 측정해 최대 5회 재인코딩하면서 품질과 필요 시 해상도를 낮춥니다.",
+            checked = targetEnabled,
+            enabled =
+                enabled &&
+                    splitMode == SplitMode.NONE &&
+                    !lossless,
+            onCheckedChange =
+                onTargetEnabledChange
+        )
+
+        if (targetEnabled) {
+            SliderSetting(
+                title = "목표 전체 용량",
+                valueText =
+                    targetMb.toString() +
+                        " MB",
+                value = targetMb.toFloat(),
+                range = 1f..100f,
+                steps = 98,
+                enabled =
+                    enabled &&
+                        splitMode ==
+                            SplitMode.NONE &&
+                        !lossless,
+                onValue = {
+                    onTargetMbChange(
+                        it.roundToInt()
+                    )
+                }
+            )
+
+            Text(
+                "현재 설정 기준 추천 품질 Q" +
+                    recommendation,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+
+            OutlinedButton(
+                onClick = {
+                    onApplyRecommendedQuality(
+                        recommendation
+                    )
+                },
+                enabled =
+                    enabled &&
+                        !lossless,
+                modifier =
+                    Modifier.fillMaxWidth()
+            ) {
+                Text("추천 품질 먼저 적용")
+            }
+        }
+
+        if (
+            splitMode != SplitMode.NONE
+        ) {
+            Text(
+                "전체 목표 용량은 분할 없음에서만 사용합니다. 분할 모드에서는 파일당 목표 용량을 사용하세요.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 
