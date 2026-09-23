@@ -11,7 +11,7 @@ v0.4는 Termux의 FFmpeg 처리 방식을 참고해 변환 구조를 바꿨습�
 - Android SAF URI를 FFmpeg가 직접 읽고 써서 원본 영상의 앱 캐시 복사 제거
 - `-ss`를 입력 전에 적용해 구간 시작점 탐색 비용 절감
 - ARM64 네이티브 FFmpeg 사용
-- 빠름 / 균형 / 최대 압축 3단계
+- 빠름 / 균형 / 최대 압축 3단계 (기본값: 빠름)
 - 결과 화면에 실제 변환 소요 시간 표시
 
 Termux의 현재 ffmpeg 패키지도 Android에서 libwebp와 MediaCodec 등을 활성화한 네이티브 FFmpeg를 사용합니다.
