@@ -1205,7 +1205,13 @@ private fun VideoToWebPApp(
         ) {
             CompactHeader(
                 themeMode = themeMode,
-                onThemeModeChange = onThemeModeChange
+                hasVideo = videoUri != null,
+                changeEnabled = !converting,
+                onThemeModeChange = onThemeModeChange,
+                onChangeVideo = {
+                    exoPlayer.pause()
+                    videoPicker.launch(arrayOf("video/*"))
+                }
             )
 
             if (videoInfo != null) {
@@ -1833,7 +1839,10 @@ private fun Header(
 @Composable
 private fun CompactHeader(
     themeMode: ThemeMode,
-    onThemeModeChange: (ThemeMode) -> Unit
+    hasVideo: Boolean,
+    changeEnabled: Boolean,
+    onThemeModeChange: (ThemeMode) -> Unit,
+    onChangeVideo: () -> Unit
 ) {
     val nextTheme = when (themeMode) {
         ThemeMode.SYSTEM -> ThemeMode.LIGHT
@@ -1867,12 +1876,26 @@ private fun CompactHeader(
             )
         }
 
-        FilledTonalButton(
-            onClick = {
-                onThemeModeChange(nextTheme)
-            }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(themeLabel)
+            if (hasVideo) {
+                Button(
+                    onClick = onChangeVideo,
+                    enabled = changeEnabled
+                ) {
+                    Text("영상 변경")
+                }
+            }
+
+            FilledTonalButton(
+                onClick = {
+                    onThemeModeChange(nextTheme)
+                }
+            ) {
+                Text(themeLabel)
+            }
         }
     }
 }
