@@ -1527,6 +1527,34 @@ private fun VideoToWebPApp(
                                 onAction = { selectedTab = 0 }
                             )
                         } else {
+                            videoInfo?.let { currentInfo ->
+                                MiniVideoPlayerCard(
+                                    exoPlayer = exoPlayer,
+                                    info = currentInfo,
+                                    currentPositionMs =
+                                        currentPositionMs,
+                                    isPlaying = isPlaying,
+                                    enabled = !converting,
+                                    onTogglePlay = {
+                                        if (exoPlayer.isPlaying) {
+                                            exoPlayer.pause()
+                                        } else {
+                                            exoPlayer.play()
+                                        }
+                                    },
+                                    onSeekBy = { delta ->
+                                        exoPlayer.pause()
+                                        seekPlayer(
+                                            currentPositionMs + delta
+                                        )
+                                    },
+                                    onSeekTo = { target ->
+                                        exoPlayer.pause()
+                                        seekPlayer(target)
+                                    }
+                                )
+                            }
+
                             OutputSettingsCard(
                                 fps = fps,
                                 quality = quality,
@@ -1646,6 +1674,34 @@ private fun VideoToWebPApp(
                             .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
+                        videoInfo?.let { currentInfo ->
+                            MiniVideoPlayerCard(
+                                exoPlayer = exoPlayer,
+                                info = currentInfo,
+                                currentPositionMs =
+                                    currentPositionMs,
+                                isPlaying = isPlaying,
+                                enabled = !converting,
+                                onTogglePlay = {
+                                    if (exoPlayer.isPlaying) {
+                                        exoPlayer.pause()
+                                    } else {
+                                        exoPlayer.play()
+                                    }
+                                },
+                                onSeekBy = { delta ->
+                                    exoPlayer.pause()
+                                    seekPlayer(
+                                        currentPositionMs + delta
+                                    )
+                                },
+                                onSeekTo = { target ->
+                                    exoPlayer.pause()
+                                    seekPlayer(target)
+                                }
+                            )
+                        }
+
                         val converted = result
                         if (converted == null) {
                             EmptyTabHint(
@@ -2308,6 +2364,16 @@ private fun CompactFocusPreview(
                 }
             }
 
+            CompactPlaybackControls(
+                currentPositionMs = currentPositionMs,
+                durationMs = info.durationMs,
+                isPlaying = isPlaying,
+                enabled = !converting,
+                onTogglePlay = onTogglePlay,
+                onSeekBy = onSeekBy,
+                onSeekTo = onSeekTo
+            )
+
             Text(
                 if (
                     cropAspect == CropAspect.ORIGINAL &&
@@ -2326,6 +2392,191 @@ private fun CompactFocusPreview(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+        }
+    }
+}
+
+@Composable
+private fun MiniVideoPlayerCard(
+    exoPlayer: ExoPlayer,
+    info: VideoInfo,
+    currentPositionMs: Long,
+    isPlaying: Boolean,
+    enabled: Boolean,
+    onTogglePlay: () -> Unit,
+    onSeekBy: (Long) -> Unit,
+    onSeekTo: (Long) -> Unit
+) {
+    val aspect =
+        if (
+            info.width > 0 &&
+            info.height > 0
+        ) {
+            (
+                info.width.toFloat() /
+                    info.height.toFloat()
+                )
+                .coerceIn(0.56f, 1.9f)
+        } else {
+            16f / 9f
+        }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(0.dp),
+        color = Color.Black
+    ) {
+        Column {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(aspect),
+                contentAlignment = Alignment.Center
+            ) {
+                AndroidView(
+                    factory = { ctx ->
+                        PlayerView(ctx).apply {
+                            player = exoPlayer
+                            useController = false
+                            resizeMode =
+                                AspectRatioFrameLayout
+                                    .RESIZE_MODE_FIT
+                            setShowBuffering(
+                                PlayerView
+                                    .SHOW_BUFFERING_WHEN_PLAYING
+                            )
+                        }
+                    },
+                    update = { view ->
+                        view.player = exoPlayer
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+
+            CompactPlaybackControls(
+                currentPositionMs = currentPositionMs,
+                durationMs = info.durationMs,
+                isPlaying = isPlaying,
+                enabled = enabled,
+                onTogglePlay = onTogglePlay,
+                onSeekBy = onSeekBy,
+                onSeekTo = onSeekTo
+            )
+        }
+    }
+}
+
+@Composable
+private fun CompactPlaybackControls(
+    currentPositionMs: Long,
+    durationMs: Long,
+    isPlaying: Boolean,
+    enabled: Boolean,
+    onTogglePlay: () -> Unit,
+    onSeekBy: (Long) -> Unit,
+    onSeekTo: (Long) -> Unit
+) {
+    val safeDuration =
+        durationMs.coerceAtLeast(1L)
+    val safePosition =
+        currentPositionMs
+            .coerceIn(0L, safeDuration)
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                horizontal = 12.dp,
+                vertical = 8.dp
+            ),
+        verticalArrangement =
+            Arrangement.spacedBy(6.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement =
+                Arrangement.SpaceBetween,
+            verticalAlignment =
+                Alignment.CenterVertically
+        ) {
+            Text(
+                formatDetailedTime(safePosition),
+                style =
+                    MaterialTheme
+                        .typography
+                        .labelMedium
+            )
+            Text(
+                formatDetailedTime(safeDuration),
+                style =
+                    MaterialTheme
+                        .typography
+                        .labelMedium,
+                color =
+                    MaterialTheme
+                        .colorScheme
+                        .onSurfaceVariant
+            )
+        }
+
+        Slider(
+            value =
+                safePosition.toFloat(),
+            onValueChange = {
+                onSeekTo(
+                    it.toLong()
+                        .coerceIn(
+                            0L,
+                            safeDuration
+                        )
+                )
+            },
+            valueRange =
+                0f..safeDuration
+                    .toFloat()
+                    .coerceAtLeast(1f),
+            enabled = enabled
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement =
+                Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedButton(
+                onClick = {
+                    onSeekBy(-1000L)
+                },
+                enabled = enabled,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("−1초")
+            }
+
+            Button(
+                onClick = onTogglePlay,
+                enabled = enabled,
+                modifier = Modifier.weight(1.25f)
+            ) {
+                Text(
+                    if (isPlaying) {
+                        "일시정지"
+                    } else {
+                        "재생"
+                    }
+                )
+            }
+
+            OutlinedButton(
+                onClick = {
+                    onSeekBy(1000L)
+                },
+                enabled = enabled,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("+1초")
+            }
         }
     }
 }
