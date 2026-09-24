@@ -12,8 +12,8 @@ android {
         applicationId = "com.kidmi.videotowebp"
         minSdk = 29
         targetSdk = 35
-        versionCode = 14
-        versionName = "1.2.0"
+        versionCode = 15
+        versionName = "1.2.1"
 
         ndk {
             abiFilters += "arm64-v8a"
