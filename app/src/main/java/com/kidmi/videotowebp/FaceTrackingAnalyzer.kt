@@ -18,7 +18,7 @@ import com.google.mlkit.vision.pose.PoseDetection
 import com.google.mlkit.vision.pose.PoseDetector
 import com.google.mlkit.vision.pose.PoseLandmark
 import com.google.mlkit.vision.pose.defaults.PoseDetectorOptions
-import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.ceil
 import kotlin.math.hypot
 import kotlin.math.max
@@ -40,11 +40,11 @@ data class FocusKeyframe(
 class FaceTrackingAnalyzer(
     private val context: Context
 ) {
-    private val cancelled = AtomicBoolean(false)
+    private val runGeneration = AtomicInteger(0)
     private val mainHandler = Handler(Looper.getMainLooper())
 
     fun cancel() {
-        cancelled.set(true)
+        runGeneration.incrementAndGet()
     }
 
     fun analyze(
@@ -60,11 +60,24 @@ class FaceTrackingAnalyzer(
         onError: (String) -> Unit,
         onCancelled: () -> Unit
     ) {
-        cancel()
-        cancelled.set(false)
+        val runId = runGeneration.incrementAndGet()
+
+        fun isCancelled(): Boolean {
+            return runGeneration.get() != runId
+        }
+
+        fun postCurrent(block: () -> Unit) {
+            mainHandler.postCurrent {
+                if (!isCancelled()) {
+                    block()
+                }
+            }
+        }
 
         if (mode == TrackingMode.FIXED) {
-            post { onComplete(emptyList()) }
+            postCurrent {
+                onComplete(emptyList())
+            }
             return
         }
 
@@ -82,7 +95,7 @@ class FaceTrackingAnalyzer(
             val retriever = MediaMetadataRetriever()
 
             try {
-                post {
+                postCurrent {
                     onStatus(
                         when (mode) {
                             TrackingMode.FACE -> "얼굴 추적 준비 중…"
@@ -92,7 +105,7 @@ class FaceTrackingAnalyzer(
                         }
                     )
                 }
-                post { onProgress(0.01f) }
+                postCurrent { onProgress(0.01f) }
 
                 retriever.setDataSource(context, sourceUri)
 
@@ -175,12 +188,12 @@ class FaceTrackingAnalyzer(
                 val points = mutableListOf<FocusKeyframe>()
 
                 sampleTimes.forEachIndexed { index, timeMs ->
-                    if (cancelled.get()) {
-                        post(onCancelled)
+                    if (isCancelled()) {
+                        postCurrent(onCancelled)
                         return@Thread
                     }
 
-                    post {
+                    postCurrent {
                         onStatus(
                             trackingLabel(mode) +
                                 " 분석 중… " +
@@ -360,7 +373,7 @@ class FaceTrackingAnalyzer(
                         }
                     }
 
-                    post {
+                    postCurrent {
                         onProgress(
                             ((index + 1f) / sampleTimes.size)
                                 .coerceIn(0f, 1f)
@@ -368,8 +381,8 @@ class FaceTrackingAnalyzer(
                     }
                 }
 
-                if (cancelled.get()) {
-                    post(onCancelled)
+                if (isCancelled()) {
+                    postCurrent(onCancelled)
                     return@Thread
                 }
 
@@ -379,14 +392,14 @@ class FaceTrackingAnalyzer(
                     endMs = clipEnd
                 )
 
-                post {
+                postCurrent {
                     onComplete(completed)
                 }
             } catch (e: Throwable) {
-                if (cancelled.get()) {
-                    post(onCancelled)
+                if (isCancelled()) {
+                    postCurrent(onCancelled)
                 } else {
-                    post {
+                    postCurrent {
                         onError(
                             trackingLabel(mode) +
                                 " 분석에 실패했습니다. " +
