@@ -1,3 +1,13 @@
+## v1.2.1 Gesture & Stability
+
+- 영상 화면 직접 조작: 탭으로 중심 지정, 한 손가락 드래그로 크롭 위치 이동, 두 손가락 핀치로 1~4x 확대/축소
+- 메인 편집 플레이어와 추적 플레이어 모두 동일한 크롭 제스처 지원
+- 영상 미리보기의 둥근 모서리를 제거하고 각진 원본 프레임으로 표시
+- 추적/출력/결과 탭에서도 원본 영상 재생·일시정지·±1초·탐색 슬라이더 제공
+- 크롭 화면비/위치/확대/추적 모드는 더 이상 이전 실행 설정을 복원하지 않으며 새 영상마다 기본값으로 초기화
+- ML 얼굴/포즈 분석에 세대 토큰을 적용해 이전 분석 스레드의 늦은 콜백이 새 분석을 덮어쓰지 못하도록 수정
+- FFmpeg 변환에도 세대 토큰을 적용해 취소·재시작 후 이전 세션 콜백이 새 작업 상태를 건드리지 못하도록 수정
+
 ## v1.2 Studio
 
 - 상세 크롭 편집: 화면비 + 1.00~4.00x 확대 + X/Y 위치 조절 + 화면 탭 포커스 + 초기화
@@ -130,4 +140,4 @@ GitHub Actions에서 앱 전용 ARM64 FFmpegKit AAR을 직접 빌드합니다.
 
 ## APK
 
-GitHub **Actions → Build Android APK → 최신 성공 빌드 → Artifacts → MotionWebP-v1.2-studio-final-apk** 에서 받을 수 있습니다.
+GitHub **Actions → Build Android APK → 최신 성공 빌드 → Artifacts → MotionWebP-v1.2.1-gesture-stability-apk** 에서 받을 수 있습니다.
