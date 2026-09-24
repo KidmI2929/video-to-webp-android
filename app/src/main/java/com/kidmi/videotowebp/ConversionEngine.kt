@@ -18,6 +18,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.max
 import kotlin.math.min
 
@@ -92,6 +93,7 @@ private data class FixedSegment(
 class ConversionEngine(private val context: Context) {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val cancelled = AtomicBoolean(false)
+    private val runGeneration = AtomicInteger(0)
 
     @Volatile
     private var sessionId: Long? = null
@@ -106,6 +108,7 @@ class ConversionEngine(private val context: Context) {
         onCancelled: () -> Unit
     ) {
         cancel()
+        runGeneration.incrementAndGet()
         cancelled.set(false)
 
         val libraries = try {
@@ -981,6 +984,12 @@ class ConversionEngine(private val context: Context) {
         onFailure: (String) -> Unit,
         onCancelled: () -> Unit
     ) {
+        val encodeGeneration = runGeneration.get()
+
+        fun isStale(): Boolean {
+            return encodeGeneration != runGeneration.get()
+        }
+
         val arguments = buildArguments(
             input = input,
             output = output,
@@ -993,6 +1002,15 @@ class ConversionEngine(private val context: Context) {
             FFmpegKit.executeWithArgumentsAsync(
                 arguments.toTypedArray(),
                 { completed ->
+                    if (isStale()) {
+                        runCatching {
+                            File(output)
+                                .takeIf { it.isFile }
+                                ?.delete()
+                        }
+                        return@executeWithArgumentsAsync
+                    }
+
                     sessionId = null
 
                     when {
@@ -1025,11 +1043,13 @@ class ConversionEngine(private val context: Context) {
                 },
                 { _ -> },
                 { statistics ->
-                    onStatistics(
-                        statistics.time
-                            .coerceAtLeast(0.0)
-                            .toLong()
-                    )
+                    if (!isStale()) {
+                        onStatistics(
+                            statistics.time
+                                .coerceAtLeast(0.0)
+                                .toLong()
+                        )
+                    }
                 }
             )
         } catch (e: Throwable) {
@@ -1040,7 +1060,13 @@ class ConversionEngine(private val context: Context) {
             return
         }
 
-        sessionId = session.sessionId
+        if (isStale()) {
+            runCatching {
+                FFmpegKit.cancel(session.sessionId)
+            }
+        } else {
+            sessionId = session.sessionId
+        }
     }
 
     private fun buildArguments(
@@ -1302,6 +1328,7 @@ class ConversionEngine(private val context: Context) {
     }
 
     fun cancel() {
+        runGeneration.incrementAndGet()
         cancelled.set(true)
         sessionId?.let { id ->
             try {
