@@ -14,6 +14,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -1319,6 +1320,9 @@ private fun VideoToWebPApp(
                                 onFocusChange = { x, y ->
                                     focusX = x.coerceIn(0f, 1f)
                                     focusY = y.coerceIn(0f, 1f)
+                                },
+                                onCropZoomChange = {
+                                    cropZoom = it.coerceIn(1f, 4f)
                                 }
                             )
 
@@ -1381,10 +1385,33 @@ private fun VideoToWebPApp(
                                     ),
                                 manualKeyframes =
                                     manualKeyframes,
+                                currentPositionMs =
+                                    currentPositionMs,
+                                isPlaying = isPlaying,
                                 converting = converting,
                                 onFocusChange = { x, y ->
                                     focusX = x.coerceIn(0f, 1f)
                                     focusY = y.coerceIn(0f, 1f)
+                                },
+                                onCropZoomChange = {
+                                    cropZoom = it.coerceIn(1f, 4f)
+                                },
+                                onTogglePlay = {
+                                    if (exoPlayer.isPlaying) {
+                                        exoPlayer.pause()
+                                    } else {
+                                        exoPlayer.play()
+                                    }
+                                },
+                                onSeekBy = { delta ->
+                                    exoPlayer.pause()
+                                    seekPlayer(
+                                        currentPositionMs + delta
+                                    )
+                                },
+                                onSeekTo = { target ->
+                                    exoPlayer.pause()
+                                    seekPlayer(target)
                                 }
                             )
 
@@ -2006,8 +2033,14 @@ private fun CompactFocusPreview(
     cropZoom: Float,
     trackingPath: List<FocusKeyframe>,
     manualKeyframes: List<FocusKeyframe>,
+    currentPositionMs: Long,
+    isPlaying: Boolean,
     converting: Boolean,
-    onFocusChange: (Float, Float) -> Unit
+    onFocusChange: (Float, Float) -> Unit,
+    onCropZoomChange: (Float) -> Unit,
+    onTogglePlay: () -> Unit,
+    onSeekBy: (Long) -> Unit,
+    onSeekTo: (Long) -> Unit
 ) {
     val aspect = if (
         info.width > 0 &&
@@ -2020,9 +2053,29 @@ private fun CompactFocusPreview(
     }
     val markerColor = MaterialTheme.colorScheme.secondary
 
+    var compactGestureX by remember {
+        mutableFloatStateOf(focusX)
+    }
+    var compactGestureY by remember {
+        mutableFloatStateOf(focusY)
+    }
+    var compactGestureZoom by remember {
+        mutableFloatStateOf(cropZoom)
+    }
+
+    LaunchedEffect(focusX) {
+        compactGestureX = focusX
+    }
+    LaunchedEffect(focusY) {
+        compactGestureY = focusY
+    }
+    LaunchedEffect(cropZoom) {
+        compactGestureZoom = cropZoom
+    }
+
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(22.dp)
+        shape = RoundedCornerShape(0.dp)
     ) {
         Column(
             verticalArrangement = Arrangement.spacedBy(0.dp)
@@ -2054,17 +2107,8 @@ private fun CompactFocusPreview(
                 Canvas(
                     modifier = Modifier
                         .fillMaxSize()
-                        .pointerInput(
-                            cropAspect,
-                            converting
-                        ) {
-                            if (
-                                !converting &&
-                                (
-                                    cropAspect != CropAspect.ORIGINAL ||
-                                        cropZoom > 1.001f
-                                    )
-                            ) {
+                        .pointerInput(converting) {
+                            if (!converting) {
                                 detectTapGestures { offset ->
                                     val width =
                                         size.width.toFloat()
@@ -2072,11 +2116,58 @@ private fun CompactFocusPreview(
                                     val height =
                                         size.height.toFloat()
                                             .coerceAtLeast(1f)
-                                    onFocusChange(
+
+                                    compactGestureX =
                                         (offset.x / width)
-                                            .coerceIn(0f, 1f),
+                                            .coerceIn(0f, 1f)
+                                    compactGestureY =
                                         (offset.y / height)
                                             .coerceIn(0f, 1f)
+
+                                    onFocusChange(
+                                        compactGestureX,
+                                        compactGestureY
+                                    )
+                                }
+                            }
+                        }
+                        .pointerInput(converting) {
+                            if (!converting) {
+                                detectTransformGestures(
+                                    panZoomLock = true
+                                ) { _, pan, zoomChange, _ ->
+                                    val width =
+                                        size.width.toFloat()
+                                            .coerceAtLeast(1f)
+                                    val height =
+                                        size.height.toFloat()
+                                            .coerceAtLeast(1f)
+
+                                    compactGestureX =
+                                        (
+                                            compactGestureX +
+                                                pan.x / width
+                                            )
+                                            .coerceIn(0f, 1f)
+                                    compactGestureY =
+                                        (
+                                            compactGestureY +
+                                                pan.y / height
+                                            )
+                                            .coerceIn(0f, 1f)
+                                    compactGestureZoom =
+                                        (
+                                            compactGestureZoom *
+                                                zoomChange
+                                            )
+                                            .coerceIn(1f, 4f)
+
+                                    onFocusChange(
+                                        compactGestureX,
+                                        compactGestureY
+                                    )
+                                    onCropZoomChange(
+                                        compactGestureZoom
                                     )
                                 }
                             }
@@ -2290,7 +2381,8 @@ private fun PlayerSection(
     onSetIn: () -> Unit,
     onSetOut: () -> Unit,
     onTrimChange: (Float, Float, Float) -> Unit,
-    onFocusChange: (Float, Float) -> Unit
+    onFocusChange: (Float, Float) -> Unit,
+    onCropZoomChange: (Float) -> Unit
 ) {
     val durationSec = ((info?.durationMs ?: 100L) / 1000f).coerceAtLeast(0.1f)
     val startMs = (startSec * 1000f).toLong()
@@ -2315,6 +2407,26 @@ private fun PlayerSection(
     val focusMarkerColor =
         MaterialTheme.colorScheme.secondary
 
+    var playerGestureX by remember {
+        mutableFloatStateOf(focusX)
+    }
+    var playerGestureY by remember {
+        mutableFloatStateOf(focusY)
+    }
+    var playerGestureZoom by remember {
+        mutableFloatStateOf(cropZoom)
+    }
+
+    LaunchedEffect(focusX) {
+        playerGestureX = focusX
+    }
+    LaunchedEffect(focusY) {
+        playerGestureY = focusY
+    }
+    LaunchedEffect(cropZoom) {
+        playerGestureZoom = cropZoom
+    }
+
     val aspect = if (
         info != null &&
         info.width > 0 &&
@@ -2327,7 +2439,7 @@ private fun PlayerSection(
 
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(28.dp)
+        shape = RoundedCornerShape(0.dp)
     ) {
         Column {
             Box(
@@ -2354,30 +2466,67 @@ private fun PlayerSection(
                 Canvas(
                     modifier = Modifier
                         .fillMaxSize()
-                        .pointerInput(
-                            cropAspect,
-                            converting
-                        ) {
-                            if (
-                                !converting &&
-                                (
-                                    cropAspect != CropAspect.ORIGINAL ||
-                                        cropZoom > 1.001f
-                                    )
-                            ) {
+                        .pointerInput(converting) {
+                            if (!converting) {
                                 detectTapGestures { offset ->
-                                    val width = size.width
-                                        .toFloat()
-                                        .coerceAtLeast(1f)
-                                    val height = size.height
-                                        .toFloat()
-                                        .coerceAtLeast(1f)
+                                    val width =
+                                        size.width.toFloat()
+                                            .coerceAtLeast(1f)
+                                    val height =
+                                        size.height.toFloat()
+                                            .coerceAtLeast(1f)
 
-                                    onFocusChange(
+                                    playerGestureX =
                                         (offset.x / width)
-                                            .coerceIn(0f, 1f),
+                                            .coerceIn(0f, 1f)
+                                    playerGestureY =
                                         (offset.y / height)
                                             .coerceIn(0f, 1f)
+
+                                    onFocusChange(
+                                        playerGestureX,
+                                        playerGestureY
+                                    )
+                                }
+                            }
+                        }
+                        .pointerInput(converting) {
+                            if (!converting) {
+                                detectTransformGestures(
+                                    panZoomLock = true
+                                ) { _, pan, zoomChange, _ ->
+                                    val width =
+                                        size.width.toFloat()
+                                            .coerceAtLeast(1f)
+                                    val height =
+                                        size.height.toFloat()
+                                            .coerceAtLeast(1f)
+
+                                    playerGestureX =
+                                        (
+                                            playerGestureX +
+                                                pan.x / width
+                                            )
+                                            .coerceIn(0f, 1f)
+                                    playerGestureY =
+                                        (
+                                            playerGestureY +
+                                                pan.y / height
+                                            )
+                                            .coerceIn(0f, 1f)
+                                    playerGestureZoom =
+                                        (
+                                            playerGestureZoom *
+                                                zoomChange
+                                            )
+                                            .coerceIn(1f, 4f)
+
+                                    onFocusChange(
+                                        playerGestureX,
+                                        playerGestureY
+                                    )
+                                    onCropZoomChange(
+                                        playerGestureZoom
                                     )
                                 }
                             }
