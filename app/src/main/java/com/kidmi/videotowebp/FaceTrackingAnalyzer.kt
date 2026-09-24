@@ -67,7 +67,7 @@ class FaceTrackingAnalyzer(
         }
 
         fun postCurrent(block: () -> Unit) {
-            mainHandler.postCurrent {
+            mainHandler.post {
                 if (!isCancelled()) {
                     block()
                 }
