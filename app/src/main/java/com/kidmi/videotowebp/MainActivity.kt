@@ -266,35 +266,19 @@ private fun VideoToWebPApp(
     }
 
     var cropAspect by remember {
-        mutableStateOf(
-            runCatching {
-                CropAspect.valueOf(
-                    prefs.getString(
-                        "crop_aspect",
-                        CropAspect.ORIGINAL.name
-                    ) ?: CropAspect.ORIGINAL.name
-                )
-            }.getOrDefault(CropAspect.ORIGINAL)
-        )
+        mutableStateOf(CropAspect.ORIGINAL)
     }
 
     var focusX by remember {
-        mutableFloatStateOf(
-            prefs.getFloat("focus_x", 0.5f).coerceIn(0f, 1f)
-        )
+        mutableFloatStateOf(0.5f)
     }
 
     var focusY by remember {
-        mutableFloatStateOf(
-            prefs.getFloat("focus_y", 0.5f).coerceIn(0f, 1f)
-        )
+        mutableFloatStateOf(0.5f)
     }
 
     var cropZoom by remember {
-        mutableFloatStateOf(
-            prefs.getFloat("crop_zoom", 1f)
-                .coerceIn(1f, 4f)
-        )
+        mutableFloatStateOf(1f)
     }
 
     var targetTotalSizeEnabled by remember {
@@ -336,25 +320,7 @@ private fun VideoToWebPApp(
     }
 
     var trackingMode by remember {
-        mutableStateOf(
-            runCatching {
-                TrackingMode.valueOf(
-                    prefs.getString(
-                        "tracking_mode",
-                        null
-                    ) ?: if (
-                        prefs.getBoolean(
-                            "auto_face_track",
-                            false
-                        )
-                    ) {
-                        TrackingMode.FACE.name
-                    } else {
-                        TrackingMode.FIXED.name
-                    }
-                )
-            }.getOrDefault(TrackingMode.FIXED)
-        )
+        mutableStateOf(TrackingMode.FIXED)
     }
 
     var outputTreeUri by remember {
@@ -400,6 +366,11 @@ private fun VideoToWebPApp(
             selectedResultPart = 0
             selectedTab = 0
             videoInfo = null
+            cropAspect = CropAspect.ORIGINAL
+            focusX = 0.5f
+            focusY = 0.5f
+            cropZoom = 1f
+            trackingMode = TrackingMode.FIXED
             manualKeyframes = emptyList()
             previewTrack = emptyList()
             trackingPreviewBusy = false
@@ -474,13 +445,8 @@ private fun VideoToWebPApp(
         splitMode,
         splitCount,
         targetPartSizeMb,
-        cropAspect,
-        focusX,
-        focusY,
-        cropZoom,
         targetTotalSizeEnabled,
-        targetTotalSizeMb,
-        trackingMode
+        targetTotalSizeMb
     ) {
         prefs.edit()
             .putInt("fps", fps)
@@ -492,10 +458,6 @@ private fun VideoToWebPApp(
             .putString("split_mode", splitMode.name)
             .putInt("split_count", splitCount)
             .putInt("target_part_mb", targetPartSizeMb)
-            .putString("crop_aspect", cropAspect.name)
-            .putFloat("focus_x", focusX)
-            .putFloat("focus_y", focusY)
-            .putFloat("crop_zoom", cropZoom)
             .putBoolean(
                 "target_total_enabled",
                 targetTotalSizeEnabled
@@ -504,7 +466,11 @@ private fun VideoToWebPApp(
                 "target_total_mb",
                 targetTotalSizeMb
             )
-            .putString("tracking_mode", trackingMode.name)
+            .remove("crop_aspect")
+            .remove("focus_x")
+            .remove("focus_y")
+            .remove("crop_zoom")
+            .remove("tracking_mode")
             .remove("auto_face_track")
             .apply()
     }
